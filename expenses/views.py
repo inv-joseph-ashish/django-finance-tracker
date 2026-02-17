@@ -83,6 +83,95 @@ def create_category_ajax(request):
     return JsonResponse({'success': False, 'error': 'Invalid request method.'}, status=405)
 
 
+@login_required
+def get_payment_sources_ajax(request):
+    """
+    AJAX endpoint to get payment sources based on payment method and amount.
+    Returns filtered list with balance information.
+    """
+    if request.method == 'GET':
+        try:
+            from .models import PaymentSource, CreditCard
+            from decimal import Decimal
+            
+            payment_method = request.GET.get('payment_method', '')
+            amount_str = request.GET.get('amount', '0')
+            
+            try:
+                amount = Decimal(amount_str) if amount_str else Decimal('0')
+            except:
+                amount = Decimal('0')
+            
+            sources = []
+            
+            if payment_method == 'Cash':
+                # Cash doesn't need a payment source
+                return JsonResponse({
+                    'success': True,
+                    'sources': [],
+                    'message': 'Cash payments do not require a payment source selection'
+                })
+            
+            elif payment_method == 'Credit Card':
+                # Return only credit cards
+                credit_cards = CreditCard.objects.filter(
+                    user=request.user,
+                    is_active=True
+                ).order_by('bank_name', 'name')
+                
+                for card in credit_cards:
+                    has_sufficient_funds = card.available_limit >= amount if amount > 0 else True
+                    sources.append({
+                        'id': f'card_{card.id}',
+                        'name': card.name,
+                        'bank': card.bank_name,
+                        'balance': float(card.available_limit),
+                        'total_limit': float(card.credit_limit),
+                        'display': f"{card.name} ({card.bank_name})",
+                        'balance_display': f"₹{card.available_limit:,.2f} / ₹{card.credit_limit:,.2f}",
+                        'type': 'credit_card',
+                        'sufficient_funds': has_sufficient_funds,
+                        'disabled': not has_sufficient_funds
+                    })
+            
+            else:
+                # For other payment methods (Debit Card, UPI, NetBanking), return payment sources
+                payment_sources = PaymentSource.objects.filter(
+                    user=request.user,
+                    is_active=True
+                ).order_by('account_type', 'name')
+                
+                for source in payment_sources:
+                    has_sufficient_funds = source.balance >= amount if amount > 0 else True
+                    sources.append({
+                        'id': f'source_{source.id}',
+                        'name': source.name,
+                        'account_type': source.get_account_type_display(),
+                        'bank': source.bank_name or '',
+                        'balance': float(source.balance),
+                        'display': source.name,
+                        'balance_display': f"₹{source.balance:,.2f}",
+                        'type': 'payment_source',
+                        'sufficient_funds': has_sufficient_funds,
+                        'disabled': not has_sufficient_funds
+                    })
+            
+            return JsonResponse({
+                'success': True,
+                'sources': sources,
+                'payment_method': payment_method,
+                'amount': float(amount)
+            })
+            
+        except Exception as e:
+            return JsonResponse({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+    
+    return JsonResponse({'success': False, 'error': 'Invalid request method.'}, status=405)
+
+
 def resend_verification_email(request):
     """
     AJAX view to resend verification email.

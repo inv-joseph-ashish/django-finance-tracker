@@ -33,6 +33,9 @@ urlpatterns = [
     path(
         "category/create/ajax/", views.create_category_ajax, name="category-create-ajax"
     ),
+    path(
+        "payment-sources/ajax/", views.get_payment_sources_ajax, name="payment-sources-ajax"
+    ),
     path("category/list/", views.CategoryListView.as_view(), name="category-list"),
     path("category/add/", views.CategoryCreateView.as_view(), name="category-create"),
     path(

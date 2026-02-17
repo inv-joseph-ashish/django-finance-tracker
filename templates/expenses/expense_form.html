@@ -184,43 +184,40 @@
                         {% endfor %}
 
                         <!-- Account Selection Section -->
-                        <div class="card bg-light border-0 mb-3">
+                        <div id="payment-account-section" class="card bg-light border-0 mb-3">
                             <div class="card-body">
                                 <h6 class="card-subtitle mb-3 text-primary">
-                                    <i class="bi bi-wallet2 me-2"></i>Payment Account (Optional)
+                                    <i class="bi bi-wallet2 me-2"></i>Payment Account <span id="payment-account-required-badge" class="badge bg-danger">Required</span>
                                 </h6>
-                                <p class="text-muted small mb-3">
-                                    Link this expense to an account to automatically track your balance
+                                <p class="text-muted small mb-3" id="payment-account-description">
+                                    Select the account from which this expense was paid
                                 </p>
                                 
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label text-muted">{{ form.payment_source.label }}</label>
-                                        {{ form.payment_source }}
-                                        {% if form.payment_source.errors %}
-                                        <div class="text-danger small mt-1">{{ form.payment_source.errors.0 }}</div>
-                                        {% endif %}
-                                        {% if form.payment_source.help_text %}
-                                        <small class="form-text text-muted d-block mt-1">{{ form.payment_source.help_text }}</small>
-                                        {% endif %}
-                                    </div>
-                                    
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label text-muted">{{ form.credit_card.label }}</label>
-                                        {{ form.credit_card }}
-                                        {% if form.credit_card.errors %}
-                                        <div class="text-danger small mt-1">{{ form.credit_card.errors.0 }}</div>
-                                        {% endif %}
-                                        {% if form.credit_card.help_text %}
-                                        <small class="form-text text-muted d-block mt-1">{{ form.credit_card.help_text }}</small>
-                                        {% endif %}
-                                    </div>
+                                <div class="mb-3">
+                                    <label class="form-label text-muted">
+                                        {{ form.payment_source.label }} <span class="text-danger" id="payment-source-required-indicator">*</span>
+                                        <span id="payment-source-balance" class="badge bg-info text-dark ms-2"></span>
+                                    </label>
+                                    {{ form.payment_source }}
+                                    {% if form.payment_source.errors %}
+                                    <div class="text-danger small mt-1">{{ form.payment_source.errors.0 }}</div>
+                                    {% endif %}
+                                    {% if form.payment_source.help_text %}
+                                    <small class="form-text text-muted d-block mt-1">{{ form.payment_source.help_text }}</small>
+                                    {% endif %}
                                 </div>
                                 
-                                <div class="alert alert-info mb-0">
+                                <div id="payment-account-info" class="alert alert-info mb-0">
                                     <small>
                                         <i class="bi bi-info-circle me-1"></i>
-                                        <strong>Note:</strong> Select either a Payment Account OR a Credit Card. The amount will be automatically deducted from the selected account.
+                                        <strong>Note:</strong> The payment source options change based on your selected payment method. Accounts with insufficient balance are disabled but still visible.
+                                    </small>
+                                </div>
+                                
+                                <div id="payment-account-cash-notice" class="alert alert-warning mb-0 d-none">
+                                    <small>
+                                        <i class="bi bi-cash me-1"></i>
+                                        <strong>Cash Payment:</strong> Payment account selection is not needed for cash transactions.
                                     </small>
                                 </div>
                             </div>
@@ -366,6 +363,20 @@
 {% endblock %}
 
 {% block scripts %}
+<style>
+    /* Style for disabled payment account section when Cash is selected */
+    #payment-account-section.opacity-75 {
+        opacity: 0.6;
+        pointer-events: none;
+    }
+    
+    /* Style for disabled options in payment source dropdown */
+    #id_payment_source option:disabled {
+        color: #dc3545 !important;
+        font-style: italic;
+        background-color: #f8f9fa;
+    }
+</style>
 <script>
     const currencySymbol = '{{ currency_symbol }}';
     document.addEventListener('DOMContentLoaded', function() {
@@ -609,7 +620,7 @@
             
             // --- Share Amount Calculation and Validation ---
             const shareValidationMessage = document.getElementById('share-validation-message');
-            const remainingAmountSpan = document.getElementById('remaining-amount');
+            const remainingAmountContainer = shareValidationMessage ? shareValidationMessage.querySelector('small') : null;
             
             // Calculate equal split when participants are added or amount changes
             function calculateEqualSplit() {
@@ -632,6 +643,8 @@
             
             // Calculate and display remaining amount
             function calculateShares() {
+                if (!shareValidationMessage || !remainingAmountContainer) return;
+
                 const totalAmount = parseFloat(amountInput?.value) || 0;
                 
                 if (totalAmount <= 0) {
@@ -649,17 +662,16 @@
                 
                 if (Math.abs(remaining) > 0.01) {
                     shareValidationMessage.classList.remove('d-none');
-                    remainingAmountSpan.textContent = currencySymbol + remaining.toFixed(2);
 
                     // Change alert class based on whether we're over or under
                     if (remaining < 0) {
                         shareValidationMessage.classList.remove('alert-warning');
                         shareValidationMessage.classList.add('alert-danger');
-                        remainingAmountSpan.parentElement.innerHTML = '<strong>Over-allocated by:</strong> <span id="remaining-amount">' + currencySymbol + Math.abs(remaining).toFixed(2) + '</span>';
+                        remainingAmountContainer.innerHTML = '<strong>Over-allocated by:</strong> <span id="remaining-amount">' + currencySymbol + Math.abs(remaining).toFixed(2) + '</span>';
                     } else {
                         shareValidationMessage.classList.remove('alert-danger');
                         shareValidationMessage.classList.add('alert-warning');
-                        remainingAmountSpan.parentElement.innerHTML = '<strong>Remaining to allocate:</strong> <span id="remaining-amount">' + currencySymbol + remaining.toFixed(2) + '</span>';
+                        remainingAmountContainer.innerHTML = '<strong>Remaining to allocate:</strong> <span id="remaining-amount">' + currencySymbol + remaining.toFixed(2) + '</span>';
                     }
                 } else {
                     shareValidationMessage.classList.add('d-none');
@@ -788,7 +800,8 @@
         const totalForms = document.getElementById('id_form-TOTAL_FORMS');
 
         // Cashback toggle for formset rows
-        document.body.addEventListener('click', function(e) {
+        const formsetClickDelegateRoot = document.body || document;
+        formsetClickDelegateRoot.addEventListener('click', function(e) {
             if (e.target.closest('.cashback-toggle-btn')) {
                 const btn = e.target.closest('.cashback-toggle-btn');
                 const rowIndex = btn.getAttribute('data-row-index');
@@ -816,7 +829,7 @@
         });
 
         // Add Row
-        if (addBtn) {
+        if (addBtn && container && totalForms) {
             addBtn.addEventListener('click', function() {
                 const currentFormCount = parseInt(totalForms.value);
                 const forms = container.getElementsByClassName('form-row');
@@ -870,63 +883,65 @@
             });
         }
 
-        // Delegate click for remove/delete
-        container.addEventListener('click', function(e) {
-            // Handle Remove (New Row)
-            if (e.target.closest('.remove-row')) {
-                const row = e.target.closest('tr');
-                row.remove();
-                updateFormIndices();
-            }
-            
-            // Handle Delete (Existing Row)
-            if (e.target.closest('.delete-row')) {
-                const row = e.target.closest('tr');
-                const deleteInput = row.querySelector('input[name$="-DELETE"]');
-                if (deleteInput) {
-                    deleteInput.checked = true;
-                    row.style.display = 'none';
-                    // We don't verify fields on hidden rows, but good execution would require bypassing required attrs.
-                    // However, standard browser form submission might block if hidden inputs are required. 
-                    // Django forms usually don't put 'required' on fields if it's conditional, but we rely on browser.
-                    // Let's remove 'required' from inputs in this row to avoid submission errors.
-                    row.querySelectorAll('input, select').forEach(input => {
-                        input.removeAttribute('required');
-                    });
+        if (container && totalForms) {
+            // Delegate click for remove/delete
+            container.addEventListener('click', function(e) {
+                // Handle Remove (New Row)
+                if (e.target.closest('.remove-row')) {
+                    const row = e.target.closest('tr');
+                    row.remove();
+                    updateFormIndices();
                 }
-            }
-        });
-
-        function updateFormIndices() {
-            // Re-index all forms to avoid validation errors with ManagementForm
-            const rows = container.querySelectorAll('.form-row');
-            totalForms.value = rows.length;
-            
-            rows.forEach((row, index) => {
-                // Determine pattern for current row based on its existing content (usually form-N-)
-                // But simpler: just replace ANY form-\d+- with form-index- in the attributes we care about.
                 
-                // Update inputs, selects, textareas
-                const inputs = row.querySelectorAll('input, select, textarea');
-                inputs.forEach(input => {
-                    if (input.name) {
-                        input.name = input.name.replace(/form-\d+-/, `form-${index}-`);
+                // Handle Delete (Existing Row)
+                if (e.target.closest('.delete-row')) {
+                    const row = e.target.closest('tr');
+                    const deleteInput = row.querySelector('input[name$="-DELETE"]');
+                    if (deleteInput) {
+                        deleteInput.checked = true;
+                        row.style.display = 'none';
+                        // We don't verify fields on hidden rows, but good execution would require bypassing required attrs.
+                        // However, standard browser form submission might block if hidden inputs are required. 
+                        // Django forms usually don't put 'required' on fields if it's conditional, but we rely on browser.
+                        // Let's remove 'required' from inputs in this row to avoid submission errors.
+                        row.querySelectorAll('input, select').forEach(input => {
+                            input.removeAttribute('required');
+                        });
                     }
-                    if (input.id) {
-                        input.id = input.id.replace(/form-\d+-/, `form-${index}-`);
-                    }
-                });
-
-                // Update labels if any (though we use little labels in this table)
-                row.querySelectorAll('label').forEach(label => {
-                    if (label.htmlFor) {
-                        label.htmlFor = label.htmlFor.replace(/form-\d+-/, `form-${index}-`);
-                    }
-                });
-                
-                // Update hidden DELETE inputs or other specifics if needed
-                // The above generic input handler covers typical django form fields.
+                }
             });
+
+            function updateFormIndices() {
+                // Re-index all forms to avoid validation errors with ManagementForm
+                const rows = container.querySelectorAll('.form-row');
+                totalForms.value = rows.length;
+                
+                rows.forEach((row, index) => {
+                    // Determine pattern for current row based on its existing content (usually form-N-)
+                    // But simpler: just replace ANY form-\d+- with form-index- in the attributes we care about.
+                    
+                    // Update inputs, selects, textareas
+                    const inputs = row.querySelectorAll('input, select, textarea');
+                    inputs.forEach(input => {
+                        if (input.name) {
+                            input.name = input.name.replace(/form-\d+-/, `form-${index}-`);
+                        }
+                        if (input.id) {
+                            input.id = input.id.replace(/form-\d+-/, `form-${index}-`);
+                        }
+                    });
+
+                    // Update labels if any (though we use little labels in this table)
+                    row.querySelectorAll('label').forEach(label => {
+                        if (label.htmlFor) {
+                            label.htmlFor = label.htmlFor.replace(/form-\d+-/, `form-${index}-`);
+                        }
+                    });
+                    
+                    // Update hidden DELETE inputs or other specifics if needed
+                    // The above generic input handler covers typical django form fields.
+                });
+            }
         }
     });
 </script>
@@ -942,8 +957,8 @@
             let activeSelectId = null; 
 
             // Delegation for + buttons (covers both formset and single form)
-            // We attach to document.body to ensure we catch everything, or a common wrapper if available.
-            document.body.addEventListener('click', function(e) {
+            const categoryClickDelegateRoot = document.body || document;
+            categoryClickDelegateRoot.addEventListener('click', function(e) {
                 const btn = e.target.closest('.add-category-btn');
                 if (btn) {
                     const select = btn.previousElementSibling;
@@ -1125,26 +1140,228 @@
             }
         });
         
-        // --- Account Selection Logic ---
-        // Ensure only one account type is selected at a time
-        const paymentSourceSelect = document.querySelector('select[name="payment_source"]');
-        const creditCardSelect = document.querySelector('select[name="credit_card"]');
+        // --- Dynamic Payment Source Logic ---
+        const paymentMethodSelect = document.querySelector('select[name="payment_method"]');
+        const paymentSourceSelect = document.getElementById('id_payment_source');
+        const paymentSourceBalanceBadge = document.getElementById('payment-source-balance');
+        const paymentAccountSection = document.getElementById('payment-account-section');
+        const paymentAccountRequiredBadge = document.getElementById('payment-account-required-badge');
+        const paymentSourceRequiredIndicator = document.getElementById('payment-source-required-indicator');
+        const paymentAccountDescription = document.getElementById('payment-account-description');
+        const paymentAccountInfo = document.getElementById('payment-account-info');
+        const paymentAccountCashNotice = document.getElementById('payment-account-cash-notice');
+        const amountInput = document.querySelector('input[name="amount"]');
         
-        if (paymentSourceSelect && creditCardSelect) {
-            paymentSourceSelect.addEventListener('change', function() {
-                if (this.value) {
-                    // Clear credit card selection
-                    creditCardSelect.value = '';
-                }
-            });
+        // Function to update payment source options based on payment method and amount
+        async function updatePaymentSources() {
+            if (!paymentMethodSelect || !paymentSourceSelect) return;
             
-            creditCardSelect.addEventListener('change', function() {
-                if (this.value) {
-                    // Clear payment source selection
+            const paymentMethod = paymentMethodSelect.value;
+            const amount = amountInput ? amountInput.value : '0';
+            
+            // Show loading state
+            paymentSourceSelect.disabled = true;
+            paymentSourceSelect.innerHTML = '<option value="">Loading...</option>';
+            
+            try {
+                const response = await fetch(`/payment-sources/ajax/?payment_method=${encodeURIComponent(paymentMethod)}&amount=${encodeURIComponent(amount)}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Clear existing options
+                    paymentSourceSelect.innerHTML = '';
+                    
+                    // Handle Cash payment method
+                    if (paymentMethod === 'Cash' || data.sources.length === 0) {
+                        // Disable entire section for Cash
+                        paymentSourceSelect.disabled = true;
+                        paymentSourceSelect.innerHTML = '<option value="">Not required for Cash</option>';
+                        paymentSourceSelect.required = false;
+                        paymentSourceBalanceBadge.textContent = '';
+                        
+                        // Update UI to show Cash notice
+                        if (paymentAccountSection) {
+                            paymentAccountSection.classList.add('opacity-75');
+                        }
+                        if (paymentAccountRequiredBadge) {
+                            paymentAccountRequiredBadge.classList.add('d-none');
+                        }
+                        if (paymentSourceRequiredIndicator) {
+                            paymentSourceRequiredIndicator.classList.add('d-none');
+                        }
+                        if (paymentAccountDescription) {
+                            paymentAccountDescription.classList.add('d-none');
+                        }
+                        if (paymentAccountInfo) {
+                            paymentAccountInfo.classList.add('d-none');
+                        }
+                        if (paymentAccountCashNotice) {
+                            paymentAccountCashNotice.classList.remove('d-none');
+                        }
+                        return;
+                    }
+                    
+                    // Enable section for non-Cash payments
+                    if (paymentAccountSection) {
+                        paymentAccountSection.classList.remove('opacity-75');
+                    }
+                    if (paymentAccountRequiredBadge) {
+                        paymentAccountRequiredBadge.classList.remove('d-none');
+                    }
+                    if (paymentSourceRequiredIndicator) {
+                        paymentSourceRequiredIndicator.classList.remove('d-none');
+                    }
+                    if (paymentAccountDescription) {
+                        paymentAccountDescription.classList.remove('d-none');
+                    }
+                    if (paymentAccountInfo) {
+                        paymentAccountInfo.classList.remove('d-none');
+                    }
+                    if (paymentAccountCashNotice) {
+                        paymentAccountCashNotice.classList.add('d-none');
+                    }
+                    
+                    // Add default option
+                    const defaultOption = document.createElement('option');
+                    defaultOption.value = '';
+                    defaultOption.textContent = 'Select Payment Source';
+                    paymentSourceSelect.appendChild(defaultOption);
+                    
+                    // Add payment sources
+                    data.sources.forEach(source => {
+                        const option = document.createElement('option');
+                        option.value = source.id;
+                        
+                        // Create display text
+                        let displayText = source.display;
+                        if (source.bank) {
+                            displayText += ` (${source.bank})`;
+                        }
+                        displayText += ` - ${source.balance_display}`;
+                        
+                        option.textContent = displayText;
+                        
+                        // Disable if insufficient funds (but keep visible in dropdown)
+                        if (!source.sufficient_funds) {
+                            option.disabled = true;
+                            option.textContent += ' ⚠️ Insufficient Balance';
+                            option.style.color = '#dc3545';
+                            option.style.fontWeight = 'bold';
+                        }
+                        
+                        // Store balance info in data attribute
+                        option.dataset.balance = source.balance;
+                        option.dataset.balanceDisplay = source.balance_display;
+                        option.dataset.sufficientFunds = source.sufficient_funds;
+                        
+                        paymentSourceSelect.appendChild(option);
+                    });
+                    
+                    // Enable the select and make it required
+                    paymentSourceSelect.disabled = false;
+                    paymentSourceSelect.required = true;
+                    
+                    // Update balance badge when selection changes
+                    paymentSourceSelect.addEventListener('change', function() {
+                        const selectedOption = this.options[this.selectedIndex];
+                        if (selectedOption && selectedOption.dataset.balanceDisplay) {
+                            paymentSourceBalanceBadge.textContent = `Balance: ${selectedOption.dataset.balanceDisplay}`;
+                            paymentSourceBalanceBadge.classList.remove('d-none');
+                            
+                            // Add visual feedback if insufficient funds selected (shouldn't happen, but just in case)
+                            if (selectedOption.dataset.sufficientFunds === 'false') {
+                                paymentSourceBalanceBadge.classList.remove('bg-info');
+                                paymentSourceBalanceBadge.classList.add('bg-danger');
+                            } else {
+                                paymentSourceBalanceBadge.classList.remove('bg-danger');
+                                paymentSourceBalanceBadge.classList.add('bg-info');
+                            }
+                        } else {
+                            paymentSourceBalanceBadge.textContent = '';
+                            paymentSourceBalanceBadge.classList.add('d-none');
+                        }
+                    });
+                    
+                } else {
+                    console.error('Error fetching payment sources:', data.error);
+                    paymentSourceSelect.innerHTML = '<option value="">Error loading sources</option>';
+                    paymentSourceSelect.disabled = false;
+                    paymentSourceSelect.required = false;
+                }
+            } catch (error) {
+                console.error('Error fetching payment sources:', error);
+                paymentSourceSelect.innerHTML = '<option value="">Error loading sources</option>';
+                paymentSourceSelect.disabled = false;
+                paymentSourceSelect.required = false;
+            }
+        }
+        
+        // Update payment sources when payment method or amount changes
+        if (paymentMethodSelect) {
+            paymentMethodSelect.addEventListener('change', updatePaymentSources);
+        }
+        
+        if (amountInput) {
+            let amountTimeout;
+            let previousAmount = amountInput.value;
+
+            function resetPaymentSelectionsOnAmountEdit() {
+                // Reset payment method to Cash and clear account selection.
+                if (paymentMethodSelect) {
+                    paymentMethodSelect.value = 'Cash';
+                    paymentMethodSelect.dispatchEvent(new Event('change'));
+                }
+
+                if (paymentSourceSelect) {
                     paymentSourceSelect.value = '';
+                    paymentSourceSelect.innerHTML = '<option value="">Select Payment Method First</option>';
+                    paymentSourceSelect.disabled = true;
+                    paymentSourceSelect.required = false;
+                }
+
+                if (paymentSourceBalanceBadge) {
+                    paymentSourceBalanceBadge.textContent = '';
+                    paymentSourceBalanceBadge.classList.add('d-none');
+                }
+
+                // Reset account-section UI to neutral state
+                if (paymentAccountSection) {
+                    paymentAccountSection.classList.remove('opacity-75');
+                }
+                if (paymentAccountRequiredBadge) {
+                    paymentAccountRequiredBadge.classList.remove('d-none');
+                }
+                if (paymentSourceRequiredIndicator) {
+                    paymentSourceRequiredIndicator.classList.remove('d-none');
+                }
+                if (paymentAccountDescription) {
+                    paymentAccountDescription.classList.remove('d-none');
+                }
+                if (paymentAccountInfo) {
+                    paymentAccountInfo.classList.remove('d-none');
+                }
+                if (paymentAccountCashNotice) {
+                    paymentAccountCashNotice.classList.add('d-none');
+                }
+            }
+            
+            amountInput.addEventListener('input', function() {
+                clearTimeout(amountTimeout);
+                
+                const currentAmount = this.value;
+                
+                // Only clear and update if amount actually changed
+                if (currentAmount !== previousAmount) {
+                    amountTimeout = setTimeout(() => {
+                        resetPaymentSelectionsOnAmountEdit();
+                        previousAmount = currentAmount;
+                    }, 500); // 500ms debounce
                 }
             });
         }
+        
+        // Initial load of payment sources
+        updatePaymentSources();
     });
 </script>
 

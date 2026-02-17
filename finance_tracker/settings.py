@@ -55,6 +55,8 @@ ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
 # CSRF Trusted Origins - load from environment variable
 CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if os.getenv('CSRF_TRUSTED_ORIGINS') else []
 
+# SSL Configuration
+SSL_REQUIRED = os.getenv('SSL_REQUIRED', 'False') == 'True'
 
 # Application definition
 
@@ -128,6 +130,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'finance_tracker.wsgi.application'
+ASGI_APPLICATION = 'finance_tracker.asgi.application'
 
 
 # Database
@@ -142,7 +145,7 @@ if not use_sqlite and database_url:
             default=database_url,
             conn_max_age=600,
             conn_health_checks=True,
-            ssl_require=True
+            ssl_require=SSL_REQUIRED
         )
     }
 else:

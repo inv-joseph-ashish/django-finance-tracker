@@ -32,24 +32,17 @@ class ExpenseForm(forms.ModelForm):
         required=False,
         label="Participants",
     )
-
-    # Account selection fields
-    payment_source = forms.ModelChoiceField(
-        queryset=PaymentSource.objects.none(),
+    
+    # Unified payment source field (dynamically populated based on payment method)
+    payment_source = forms.ChoiceField(
         required=False,
-        empty_label="Select Account/Wallet/Cash",
-        widget=forms.Select(attrs={"class": "form-select"}),
-        label="Payment Account",
-        help_text="Select the account from which this expense was paid"
-    )
-
-    credit_card = forms.ModelChoiceField(
-        queryset=CreditCard.objects.none(),
-        required=False,
-        empty_label="Select Credit Card",
-        widget=forms.Select(attrs={"class": "form-select"}),
-        label="Credit Card",
-        help_text="Select the credit card used for this expense"
+        widget=forms.Select(attrs={
+            "class": "form-select",
+            "id": "id_payment_source",
+            "data-dependent-on": "payment_method"
+        }),
+        label="Payment Source",
+        help_text="Select the account or card (only options with sufficient balance are enabled)"
     )
 
     # Hidden fields for shared expense data
@@ -65,8 +58,6 @@ class ExpenseForm(forms.ModelForm):
             "description",
             "category",
             "payment_method",
-            "payment_source",
-            "credit_card",
             "has_cashback",
             "cashback_type",
             "cashback_value",
@@ -112,14 +103,8 @@ class ExpenseForm(forms.ModelForm):
                 user=user
             ).order_by("name")
 
-            # Filter payment sources and credit cards to only show user's accounts
-            self.fields["payment_source"].queryset = PaymentSource.objects.filter(
-                user=user, is_active=True
-            ).order_by("account_type", "name")
-
-            self.fields["credit_card"].queryset = CreditCard.objects.filter(
-                user=user, is_active=True
-            ).order_by("bank_name", "name")
+            # Populate payment source options dynamically
+            self.fields["payment_source"].choices = self._get_payment_source_choices(user)
 
             # Only set default participant if this is a new expense (not editing)
             # Check if participants_json already has initial data from the view
@@ -137,6 +122,69 @@ class ExpenseForm(forms.ModelForm):
             self.fields["category"].widget = forms.TextInput(
                 attrs={"class": "form-control"}
             )
+
+    def _get_payment_source_choices(self, user, expense_amount=None):
+        """
+        Generate payment source choices based on user's accounts and cards.
+        Groups by payment method type and shows balance info.
+        """
+        choices = [("", "Select Payment Source")]
+        
+        # Get all payment sources (bank accounts, wallets, cash)
+        payment_sources = PaymentSource.objects.filter(
+            user=user, is_active=True
+        ).order_by("account_type", "name")
+        
+        # Get all credit cards
+        credit_cards = CreditCard.objects.filter(
+            user=user, is_active=True
+        ).order_by("bank_name", "name")
+        
+        # Add payment sources (for all non-credit card payments)
+        for source in payment_sources:
+            label = f"{source.name} - ₹{source.balance:,.2f}"
+            # Mark as disabled if insufficient balance (will be handled in JavaScript)
+            choices.append((
+                f"source_{source.id}",
+                label,
+            ))
+        
+        # Add credit cards (for credit card payments)
+        for card in credit_cards:
+            label = f"{card.name} ({card.bank_name}) - Available: ₹{card.available_limit:,.2f}/₹{card.credit_limit:,.2f}"
+            choices.append((
+                f"card_{card.id}",
+                label,
+            ))
+        
+        return choices
+
+    def _parse_payment_source(self):
+        """
+        Parse the payment_source field to determine if it's a PaymentSource or CreditCard.
+        Returns (payment_source_obj, credit_card_obj) tuple.
+        """
+        payment_source_value = self.cleaned_data.get("payment_source")
+        
+        if not payment_source_value:
+            return None, None
+        
+        if payment_source_value.startswith("source_"):
+            source_id = int(payment_source_value.replace("source_", ""))
+            try:
+                payment_source = PaymentSource.objects.get(id=source_id, user=self.user)
+                return payment_source, None
+            except PaymentSource.DoesNotExist:
+                return None, None
+        elif payment_source_value.startswith("card_"):
+            card_id = int(payment_source_value.replace("card_", ""))
+            try:
+                credit_card = CreditCard.objects.get(id=card_id, user=self.user)
+                return None, credit_card
+            except CreditCard.DoesNotExist:
+                return None, None
+        
+        return None, None
 
     def clean_category(self):
         category = self.cleaned_data.get("category")
@@ -225,17 +273,39 @@ class ExpenseForm(forms.ModelForm):
         cashback_value = cleaned_data.get("cashback_value")
         expense_type = self.data.get("expense_type")
         payment_method = cleaned_data.get("payment_method")
-        payment_source = cleaned_data.get("payment_source")
-        credit_card = cleaned_data.get("credit_card")
+        payment_source_value = cleaned_data.get("payment_source")
+        amount = cleaned_data.get("amount")
 
-        # Validate that only one payment account is selected
-        if payment_source and credit_card:
-            self.add_error(None, "Please select either a Payment Account OR a Credit Card, not both.")
+        # Parse payment source to get actual objects
+        payment_source_obj, credit_card_obj = self._parse_payment_source()
 
-        # If payment method is Credit Card, suggest selecting a credit card
-        if payment_method == "Credit Card" and not credit_card and not payment_source:
-            # This is just a warning, not an error
-            pass
+        # Validate payment source based on payment method
+        if payment_method == "Cash":
+            # Cash doesn't require a payment source selection
+            # Clear any selected payment source for Cash payments
+            cleaned_data["payment_source"] = ""
+        elif payment_method == "Credit Card":
+            # Credit card payments REQUIRE a credit card selection
+            if not credit_card_obj and not payment_source_obj:
+                self.add_error("payment_source", "Payment source is required for credit card payments. Please select a credit card.")
+            elif credit_card_obj and amount:
+                # Check if credit card has sufficient available limit
+                if credit_card_obj.available_limit < amount:
+                    self.add_error(
+                        "payment_source",
+                        f"Insufficient credit limit. Available: ₹{credit_card_obj.available_limit:,.2f}, Required: ₹{amount:,.2f}"
+                    )
+        else:
+            # For other payment methods (Debit Card, UPI, NetBanking), REQUIRE payment source
+            if not payment_source_obj and not credit_card_obj:
+                self.add_error("payment_source", f"Payment source is required for {payment_method} payments. Please select an account.")
+            elif payment_source_obj and amount:
+                # Check if payment source has sufficient balance
+                if payment_source_obj.balance < amount:
+                    self.add_error(
+                        "payment_source",
+                        f"Insufficient balance. Available: ₹{payment_source_obj.balance:,.2f}, Required: ₹{amount:,.2f}"
+                    )
 
         # If cashback is enabled, validate type and value
         if has_cashback:
@@ -278,6 +348,25 @@ class ExpenseForm(forms.ModelForm):
                     )
 
         return cleaned_data
+
+    def save(self, commit=True):
+        """
+        Override save to properly set payment_source or credit_card
+        based on the unified payment_source field selection.
+        """
+        instance = super().save(commit=False)
+        
+        # Parse the payment_source value
+        payment_source_obj, credit_card_obj = self._parse_payment_source()
+        
+        # Set the appropriate field
+        instance.payment_source = payment_source_obj
+        instance.credit_card = credit_card_obj
+        
+        if commit:
+            instance.save()
+        
+        return instance
 
 
 class IncomeForm(forms.ModelForm):
