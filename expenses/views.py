@@ -1458,6 +1458,16 @@ class ExpenseCreateView(LoginRequiredMixin, generic.TemplateView):
                         # Create the base expense
                         expense = form.save(commit=False)
                         expense.user = request.user
+                        has_cashback = request.POST.get("has_cashback", "off")
+
+                        if has_cashback == "on":
+                            cashback_type = request.POST.get("cashback_type", "FIXED")
+                            cashback_value = request.POST.get("cashback_value", "0")
+                            expense.has_cashback = True
+                            expense.cashback_type = cashback_type
+                            expense.cashback_value = cashback_value
+                            expense.amount = Decimal(expense.amount) - Decimal(expense.cashback_amount)
+
                         expense.save()
 
                         # Update account balances
