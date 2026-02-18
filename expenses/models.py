@@ -196,7 +196,7 @@ class Expense(models.Model):
             return 0
 
         if self.cashback_type == "PERCENTAGE":
-            return (self.amount * self.cashback_value) / 100
+            return (Decimal(self.amount) * Decimal(self.cashback_value)) / 100
         elif self.cashback_type == "FIXED":
             return self.cashback_value
         return 0
