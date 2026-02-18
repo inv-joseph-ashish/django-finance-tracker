@@ -143,6 +143,18 @@
                             </div>
                         </div>
 
+                        <!-- Scan Bill Button -->
+                        <div class="mb-3">
+                            <button type="button" class="btn btn-outline-primary" id="scan-bill-btn">
+                                <i class="bi bi-camera me-1"></i> Scan Bill
+                            </button>
+                            <input type="file" class="form-control d-none" id="bill-file-input" accept="image/jpeg,image/png,image/webp">
+                            <small class="form-text text-muted d-block mt-1">
+                                Upload a bill image (JPG, PNG, WEBP) to auto-fill date, amount, and description.
+                            </small>
+                            <div id="scan-bill-status" class="alert d-none mt-2 mb-0" role="alert"></div>
+                        </div>
+
                         <!-- Regular Expense Fields -->
                         {% for field in form %}
                         {% if field.name != 'cashback_type' and field.name != 'cashback_value' and field.name != 'has_cashback' and field.name != 'expense_type' and field.name != 'participants_json' and field.name != 'payer_id' and field.name != 'participants' and field.name != 'payment_source' and field.name != 'credit_card' %}
@@ -1123,6 +1135,109 @@
         });
         
         
+        // --- Bill Scan Autofill Logic (single-form mode) ---
+        const scanBillBtn = document.getElementById('scan-bill-btn');
+        const billFileInput = document.getElementById('bill-file-input');
+        const scanBillStatus = document.getElementById('scan-bill-status');
+
+        function showScanStatus(kind, message) {
+            if (!scanBillStatus) return;
+            scanBillStatus.classList.remove('d-none', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger');
+            scanBillStatus.classList.add(`alert-${kind}`);
+            scanBillStatus.textContent = message;
+        }
+
+        function fillExpenseFormFromScan(data) {
+            const amountField = document.getElementById('id_amount');
+            const dateField = document.getElementById('id_date');
+            const descriptionField = document.getElementById('id_description');
+            const paymentMethodField = document.getElementById('id_payment_method');
+            const categoryField = document.getElementById('id_category');
+
+            if (data.amount && amountField) {
+                amountField.value = data.amount;
+                amountField.dispatchEvent(new Event('input', { bubbles: true }));
+                amountField.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            if (data.date && dateField) {
+                dateField.value = data.date;
+            }
+            if (data.description && descriptionField) {
+                descriptionField.value = data.description;
+                descriptionField.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            // Wait until amount-driven reset logic settles, then set payment method.
+            if (data.payment_method && paymentMethodField) {
+                window.setTimeout(() => {
+                    paymentMethodField.value = data.payment_method;
+                    paymentMethodField.dispatchEvent(new Event('change', { bubbles: true }));
+                }, 700);
+            }
+
+            if (data.category_suggestion && categoryField) {
+                const target = data.category_suggestion.toLowerCase();
+                for (let i = 0; i < categoryField.options.length; i++) {
+                    const opt = categoryField.options[i];
+                    if (opt.value.toLowerCase() === target || opt.text.toLowerCase() === target) {
+                        categoryField.selectedIndex = i;
+                        categoryField.dispatchEvent(new Event('change', { bubbles: true }));
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (scanBillBtn && billFileInput) {
+            scanBillBtn.addEventListener('click', function () {
+                billFileInput.click();
+            });
+
+            billFileInput.addEventListener('change', async function () {
+                const file = billFileInput.files && billFileInput.files[0];
+                if (!file) return;
+
+                showScanStatus('info', 'Scanning bill image...');
+                scanBillBtn.disabled = true;
+
+                try {
+                    const payload = new FormData();
+                    payload.append('bill_image', file);
+
+                    const response = await fetch("{% url 'scan-bill-ajax' %}", {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': '{{ csrf_token }}',
+                        },
+                        body: payload,
+                    });
+                    const result = await response.json();
+
+                    console.log("result", result);
+                    
+
+                    if (!result.success) {
+                        showScanStatus('danger', result.error || 'Bill scan failed.');
+                        return;
+                    }
+
+                    console.log("result.data", result.data);
+                    fillExpenseFormFromScan(result.data || {});
+
+                    if (result.warnings && result.warnings.length) {
+                        showScanStatus('warning', `Scanned with warnings: ${result.warnings.join(' ')}`);
+                    } else {
+                        showScanStatus('success', 'Bill scanned successfully. Fields were auto-filled.');
+                    }
+                } catch (err) {
+                    showScanStatus('danger', 'Could not scan bill right now. Please try again.');
+                } finally {
+                    scanBillBtn.disabled = false;
+                    billFileInput.value = '';
+                }
+            });
+        }
+
         // Prevent form submission on Enter key in input AND select fields
         container.addEventListener('keydown', function(e) {
             // Check if key is Enter

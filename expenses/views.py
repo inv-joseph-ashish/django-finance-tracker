@@ -40,6 +40,7 @@ from django.views.generic import (
 
 from finance_tracker.ai_utils import predict_category_ai
 from .forms import ExpenseForm, IncomeForm, RecurringTransactionForm, ProfileUpdateForm, CustomSignupForm, ContactForm
+from .services import scan_bill_image
 from .models import (
     Expense,
     Category,
@@ -170,6 +171,40 @@ def get_payment_sources_ajax(request):
             }, status=500)
     
     return JsonResponse({'success': False, 'error': 'Invalid request method.'}, status=405)
+
+
+@login_required
+def scan_bill_ajax(request):
+    """
+    Scan uploaded bill image via Gemini and return extracted fields for form autofill.
+    """
+    if request.method != "POST":
+        return JsonResponse({"success": False, "error": "Invalid request method."}, status=405)
+
+    bill_file = request.FILES.get("bill_image")
+    if not bill_file:
+        return JsonResponse({"success": False, "error": "No bill image uploaded."}, status=400)
+
+    if bill_file.size > 5 * 1024 * 1024:
+        return JsonResponse({"success": False, "error": "Image too large. Max size is 5MB."}, status=400)
+
+    allowed_mime_types = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+    mime_type = (bill_file.content_type or "").lower()
+    if mime_type not in allowed_mime_types:
+        return JsonResponse(
+            {
+                "success": False,
+                "error": "Unsupported file type. Please upload JPG, PNG, or WEBP image.",
+            },
+            status=400,
+        )
+
+    # get name and id of the categories
+    categories = Category.objects.filter(user=request.user).order_by('name').values('name', 'id')
+
+    result = scan_bill_image(image_bytes=bill_file.read(), mime_type=mime_type, categories=categories)
+    status_code = 200 if result.get("success") else 400
+    return JsonResponse(result, status=status_code)
 
 
 def resend_verification_email(request):

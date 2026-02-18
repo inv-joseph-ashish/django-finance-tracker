@@ -36,6 +36,9 @@ urlpatterns = [
     path(
         "payment-sources/ajax/", views.get_payment_sources_ajax, name="payment-sources-ajax"
     ),
+    path(
+        "scan-bill/ajax/", views.scan_bill_ajax, name="scan-bill-ajax"
+    ),
     path("category/list/", views.CategoryListView.as_view(), name="category-list"),
     path("category/add/", views.CategoryCreateView.as_view(), name="category-create"),
     path(
