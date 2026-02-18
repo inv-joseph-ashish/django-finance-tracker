@@ -1,5 +1,14 @@
 from django.contrib import admin
+
 from .models import Expense, Category, Income, RecurringTransaction, Notification
+from .models import Friend
+
+
+@admin.register(Friend)
+class FriendAdmin(admin.ModelAdmin):
+    list_display = ('name', 'email', 'phone', 'created_at')
+    search_fields = ('name', 'email', 'phone')
+    ordering = ('name',)
 
 @admin.register(Notification)
 class NotificationAdmin(admin.ModelAdmin):

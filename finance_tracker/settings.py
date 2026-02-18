@@ -50,10 +50,13 @@ CRON_SECRET = os.getenv('CRON_SECRET', 'change_me_in_prod')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = ['*']  # Update this to specific domain in production
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
 
-CSRF_TRUSTED_ORIGINS = ['https://trackmyrupee.com', 'https://www.trackmyrupee.com', 'https://django-finance-tracker-fr1u.onrender.com']
+# CSRF Trusted Origins - load from environment variable
+CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if os.getenv('CSRF_TRUSTED_ORIGINS') else []
 
+# SSL Configuration
+SSL_REQUIRED = os.getenv('SSL_REQUIRED', 'False') == 'True'
 
 # Application definition
 
@@ -66,6 +69,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django.contrib.sites',
     'django.contrib.sitemaps',
+    'django.contrib.humanize',
     'expenses',
     'blog',
     'allauth',
@@ -126,6 +130,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'finance_tracker.wsgi.application'
+ASGI_APPLICATION = 'finance_tracker.asgi.application'
 
 
 # Database
@@ -140,7 +145,7 @@ if not use_sqlite and database_url:
             default=database_url,
             conn_max_age=600,
             conn_health_checks=True,
-            ssl_require=True
+            ssl_require=SSL_REQUIRED
         )
     }
 else:
@@ -212,7 +217,7 @@ AUTHENTICATION_BACKENDS = [
 SITE_ID = int(os.environ.get('SITE_ID', 1))
 
 # Account Settings
-ACCOUNT_EMAIL_VERIFICATION = 'mandatory'
+ACCOUNT_EMAIL_VERIFICATION = 'optional' if DEBUG else 'mandatory'
 
 # Google Analytics
 GOOGLE_ANALYTICS_ID = os.environ.get('GOOGLE_ANALYTICS_ID')

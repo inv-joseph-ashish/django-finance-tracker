@@ -1,0 +1,695 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+    /* Responsive Filter Widths */
+    @media (min-width: 992px) {
+        .filter-w-year { width: 110px; }
+        .filter-w-month { width: 140px; }
+    }
+</style>
+<div class="fade-in">
+    <!-- Mobile Header -->
+    <div class="card-header bg-transparent d-md-none py-3">
+        <div class="d-flex justify-content-between align-items-center">
+            <h2 class="h4 mb-0 fw-bold">Balance Summary</h2>
+            <button class="btn btn-sm btn-link text-decoration-none text-muted p-0 border-0 fs-6" type="button" data-bs-toggle="collapse" data-bs-target="#balanceFilters" aria-expanded="false" aria-controls="balanceFilters">
+                <i class="bi bi-funnel me-1"></i> Filters
+            </button>
+        </div>
+        <p class="text-muted small mb-0 mt-1">Track who owes you and whom you owe.</p>
+    </div>
+
+    <!-- Desktop Header -->
+    <div class="card-header bg-transparent d-none d-md-block py-3">
+        <div class="d-flex justify-content-between align-items-center">
+            <h2 class="h4 mb-0 fw-bold">Balance Summary</h2>
+        </div>
+        <p class="text-muted small mb-0 mt-1">Track who owes you and whom you owe.</p>
+    </div>
+
+    <!-- Filter Form -->
+    <div class="collapse d-md-block" id="balanceFilters" style="z-index: 1040; position: relative;">
+        <form method="get" class="mb-4 bg-body-tertiary p-3 rounded shadow-sm" id="filter-form">
+            <div class="row g-2 align-items-end flex-lg-nowrap">
+                <!-- Person/Friend -->
+                <div class="col-12 col-md-auto" style="min-width: 180px;">
+                    <label for="friend-select" class="form-label small text-muted">Person</label>
+                    <select name="friend" id="friend-select" class="form-control form-control-sm">
+                        <option value="">All People</option>
+                        {% for friend in all_friends %}
+                            <option value="{{ friend.id }}" {% if friend.id == selected_friend_id %}selected{% endif %}>
+                                {{ friend.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- Year -->
+                <div class="col-6 col-md-auto filter-w-year">
+                    <label for="year-select" class="form-label small text-muted">Year</label>
+                    <select name="year" id="year-select" class="form-control form-control-sm">
+                        <option value="">All Years</option>
+                        {% for yr in years %}
+                            <option value="{{ yr }}" {% if yr == selected_year %}selected{% endif %}>
+                                {{ yr }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- Month -->
+                <div class="col-6 col-md-auto filter-w-month">
+                    <label for="month-select" class="form-label small text-muted">Month</label>
+                    <select name="month" id="month-select" class="form-control form-control-sm">
+                        <option value="">All Months</option>
+                        {% for num, name in months_list %}
+                            <option value="{{ num }}" {% if num == selected_month %}selected{% endif %}>
+                                {{ name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Buttons -->
+                <div class="col-6 col-md-auto">
+                    <button type="submit" class="btn btn-primary btn-sm w-100 w-md-auto">
+                        <i class="bi bi-filter me-1"></i> Apply
+                    </button>
+                </div>
+                <!-- Reset -->
+                <div class="col-6 col-md-auto">
+                    <a href="{% url 'balance-summary' %}" class="btn btn-outline-secondary btn-sm w-100 w-md-auto">
+                        <i class="bi bi-arrow-counterclockwise me-1"></i> Reset
+                    </a>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Filter Status -->
+    {% if filter_applied %}
+    <div class="px-3 mb-3">
+        <div class="alert alert-info py-2 mb-0">
+            <i class="bi bi-info-circle me-1"></i>
+            Showing balances for 
+            {% if selected_friend_id %}
+                {% for friend in all_friends %}
+                    {% if friend.id == selected_friend_id %}
+                        <strong>{{ friend.name }}</strong>
+                        {% if selected_month and selected_year %}
+                            in <strong>{{ month_name }} {{ selected_year }}</strong>
+                        {% elif selected_year %}
+                            in <strong>{{ selected_year }}</strong>
+                        {% endif %}
+                    {% endif %}
+                {% endfor %}
+            {% elif selected_month and selected_year %}
+                <strong>{{ month_name }} {{ selected_year }}</strong>
+            {% elif selected_year %}
+                <strong>{{ selected_year }}</strong>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <div class="px-3 mb-3">
+        <div class="alert alert-secondary py-2 mb-0">
+            <i class="bi bi-calendar-range me-1"></i>
+            Showing balances for <strong>all time</strong>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Friends Management Section -->
+    <div class="px-3 mb-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-people-fill me-2"></i>Manage Friends</h5>
+                <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#addFriendModal">
+                    <i class="bi bi-plus-lg me-1"></i> Add Friend
+                </button>
+            </div>
+            <div class="card-body">
+                {% if all_friends %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Phone</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="friends-table-body">
+                            {% for friend in all_friends %}
+                            <tr data-friend-id="{{ friend.id }}">
+                                <td class="fw-bold">{{ friend.name }}</td>
+                                <td>{{ friend.email|default:"-" }}</td>
+                                <td>{{ friend.phone|default:"-" }}</td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-outline-primary edit-friend-btn" 
+                                            data-friend-id="{{ friend.id }}"
+                                            data-friend-name="{{ friend.name }}"
+                                            data-friend-email="{{ friend.email|default:'' }}"
+                                            data-friend-phone="{{ friend.phone|default:'' }}">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger delete-friend-btn" 
+                                            data-friend-id="{{ friend.id }}"
+                                            data-friend-name="{{ friend.name }}">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="bi bi-people text-muted" style="font-size: 3rem;"></i>
+                    <p class="text-muted mt-2">No friends added yet. Add friends to track shared expenses.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Overall Summary Cards -->
+    <div class="px-3 mb-3">
+        <div class="row g-2">
+            <div class="col-12 col-md-4">
+                <div class="p-3 border rounded bg-body-tertiary shadow-sm">
+                    <small class="text-muted d-block text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.5px;">People Owe You</small>
+                    <span class="fw-bold text-success fs-4">{{ currency_symbol }}{{ total_owed_to_user|floatformat:2 }}</span>
+                </div>
+            </div>
+            <div class="col-6 col-md-4">
+                <div class="p-3 border rounded bg-body-tertiary shadow-sm">
+                    <small class="text-muted d-block text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.5px;">You Owe People</small>
+                    <span class="fw-bold text-danger fs-4">{{ currency_symbol }}{{ total_user_owes|floatformat:2 }}</span>
+                </div>
+            </div>
+            <div class="col-6 col-md-4">
+                <div class="p-3 border rounded bg-body-tertiary shadow-sm">
+                    <small class="text-muted d-block text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.5px;">Overall Net</small>
+                    <span class="fw-bold {% if overall_net >= 0 %}text-success{% else %}text-danger{% endif %} fs-4">
+                        {{ currency_symbol }}{{ overall_net|floatformat:2 }}
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Balance Details -->
+    <div class="card-body p-3">
+        {% if people_owe_user or user_owes_people or settled_people %}
+            
+            <!-- People Who Owe User -->
+            {% if people_owe_user %}
+            <div class="mb-4">
+                <h5 class="fw-bold text-success mb-3">
+                    <i class="bi bi-arrow-down-circle-fill me-2"></i>People Owe You
+                </h5>
+                <div class="list-group">
+                    {% for balance in people_owe_user %}
+                    <div class="list-group-item" data-friend-id="{{ balance.id }}">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1 fw-bold">{{ balance.name }}</h6>
+                                {% if balance.email or balance.phone %}
+                                <small class="text-muted d-block mb-1">
+                                    {% if balance.email %}<i class="bi bi-envelope me-1"></i>{{ balance.email }}{% endif %}
+                                    {% if balance.email and balance.phone %} | {% endif %}
+                                    {% if balance.phone %}<i class="bi bi-telephone me-1"></i>{{ balance.phone }}{% endif %}
+                                </small>
+                                {% endif %}
+                                <small class="text-muted">
+                                    Lent: {{ currency_symbol }}{{ balance.lent|floatformat:2 }} |
+                                    Borrowed: {{ currency_symbol }}{{ balance.borrowed|floatformat:2 }}
+                                </small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge bg-success fs-6 px-3 py-2">
+                                    {{ currency_symbol }}{{ balance.net_abs|floatformat:2 }}
+                                </span>
+                                <div class="small text-muted mt-1">owes you</div>
+                                {% if balance.transactions %}
+                                <button class="btn btn-sm btn-outline-secondary mt-2" type="button" 
+                                        data-bs-toggle="collapse" 
+                                        data-bs-target="#transactions-{{ balance.id }}" 
+                                        aria-expanded="false">
+                                    <i class="bi bi-list-ul me-1"></i>View Transactions
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        {% if balance.transactions %}
+                        <div class="collapse mt-3" id="transactions-{{ balance.id }}">
+                            <div class="card card-body bg-light">
+                                <h6 class="fw-bold mb-3">Transaction History</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Description</th>
+                                                <th>Total</th>
+                                                <th>Your Share</th>
+                                                <th>{{ balance.name }}'s Share</th>
+                                                <th>Who Paid</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for txn in balance.transactions %}
+                                            <tr>
+                                                <td class="text-nowrap">{{ txn.date|date:"M d, Y" }}</td>
+                                                <td>
+                                                    <div>{{ txn.description }}</div>
+                                                    <small class="text-muted">{{ txn.category }}</small>
+                                                </td>
+                                                <td class="text-nowrap">{{ currency_symbol }}{{ txn.total_amount|floatformat:2 }}</td>
+                                                <td class="text-nowrap">{{ currency_symbol }}{{ txn.your_share|floatformat:2 }}</td>
+                                                <td class="text-nowrap">{{ currency_symbol }}{{ txn.friend_share|floatformat:2 }}</td>
+                                                <td>
+                                                    {% if txn.you_paid %}
+                                                        <span class="badge bg-success">You</span>
+                                                    {% elif txn.friend_paid %}
+                                                        <span class="badge bg-info">{{ balance.name }}</span>
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- People User Owes -->
+            {% if user_owes_people %}
+            <div class="mb-4">
+                <h5 class="fw-bold text-danger mb-3">
+                    <i class="bi bi-arrow-up-circle-fill me-2"></i>You Owe People
+                </h5>
+                <div class="list-group">
+                    {% for balance in user_owes_people %}
+                    <div class="list-group-item" data-friend-id="{{ balance.id }}">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1 fw-bold">{{ balance.name }}</h6>
+                                {% if balance.email or balance.phone %}
+                                <small class="text-muted d-block mb-1">
+                                    {% if balance.email %}<i class="bi bi-envelope me-1"></i>{{ balance.email }}{% endif %}
+                                    {% if balance.email and balance.phone %} | {% endif %}
+                                    {% if balance.phone %}<i class="bi bi-telephone me-1"></i>{{ balance.phone }}{% endif %}
+                                </small>
+                                {% endif %}
+                                <small class="text-muted">
+                                    Lent: {{ currency_symbol }}{{ balance.lent|floatformat:2 }} |
+                                    Borrowed: {{ currency_symbol }}{{ balance.borrowed|floatformat:2 }}
+                                </small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge bg-danger fs-6 px-3 py-2">
+                                    {{ currency_symbol }}{{ balance.net_abs|floatformat:2 }}
+                                </span>
+                                <div class="small text-muted mt-1">you owe</div>
+                                {% if balance.transactions %}
+                                <button class="btn btn-sm btn-outline-secondary mt-2" type="button" 
+                                        data-bs-toggle="collapse" 
+                                        data-bs-target="#transactions-{{ balance.id }}" 
+                                        aria-expanded="false">
+                                    <i class="bi bi-list-ul me-1"></i>View Transactions
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        {% if balance.transactions %}
+                        <div class="collapse mt-3" id="transactions-{{ balance.id }}">
+                            <div class="card card-body bg-light">
+                                <h6 class="fw-bold mb-3">Transaction History</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Description</th>
+                                                <th>Total</th>
+                                                <th>Your Share</th>
+                                                <th>{{ balance.name }}'s Share</th>
+                                                <th>Who Paid</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for txn in balance.transactions %}
+                                            <tr>
+                                                <td class="text-nowrap">{{ txn.date|date:"M d, Y" }}</td>
+                                                <td>
+                                                    <div>{{ txn.description }}</div>
+                                                    <small class="text-muted">{{ txn.category }}</small>
+                                                </td>
+                                                <td class="text-nowrap">{{ currency_symbol }}{{ txn.total_amount|floatformat:2 }}</td>
+                                                <td class="text-nowrap">{{ currency_symbol }}{{ txn.your_share|floatformat:2 }}</td>
+                                                <td class="text-nowrap">{{ currency_symbol }}{{ txn.friend_share|floatformat:2 }}</td>
+                                                <td>
+                                                    {% if txn.you_paid %}
+                                                        <span class="badge bg-success">You</span>
+                                                    {% elif txn.friend_paid %}
+                                                        <span class="badge bg-info">{{ balance.name }}</span>
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Settled People -->
+            {% if settled_people %}
+            <div class="mb-4">
+                <h5 class="fw-bold text-secondary mb-3">
+                    <i class="bi bi-check-circle-fill me-2"></i>Settled
+                </h5>
+                <div class="list-group">
+                    {% for balance in settled_people %}
+                    <div class="list-group-item" data-friend-id="{{ balance.id }}">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1 fw-bold">{{ balance.name }}</h6>
+                                {% if balance.email or balance.phone %}
+                                <small class="text-muted d-block mb-1">
+                                    {% if balance.email %}<i class="bi bi-envelope me-1"></i>{{ balance.email }}{% endif %}
+                                    {% if balance.email and balance.phone %} | {% endif %}
+                                    {% if balance.phone %}<i class="bi bi-telephone me-1"></i>{{ balance.phone }}{% endif %}
+                                </small>
+                                {% endif %}
+                                <small class="text-muted">
+                                    Lent: {{ currency_symbol }}{{ balance.lent|floatformat:2 }} | 
+                                    Borrowed: {{ currency_symbol }}{{ balance.borrowed|floatformat:2 }}
+                                </small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge bg-secondary fs-6 px-3 py-2">
+                                    Settled
+                                </span>
+                                {% if balance.transactions %}
+                                <button class="btn btn-sm btn-outline-secondary mt-2" type="button" 
+                                        data-bs-toggle="collapse" 
+                                        data-bs-target="#transactions-{{ balance.id }}" 
+                                        aria-expanded="false">
+                                    <i class="bi bi-list-ul me-1"></i>View Transactions
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        {% if balance.transactions %}
+                        <div class="collapse mt-3" id="transactions-{{ balance.id }}">
+                            <div class="card card-body bg-light">
+                                <h6 class="fw-bold mb-3">Transaction History</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Description</th>
+                                                <th>Total</th>
+                                                <th>Your Share</th>
+                                                <th>{{ balance.name }}'s Share</th>
+                                                <th>Who Paid</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for txn in balance.transactions %}
+                                            <tr>
+                                                <td class="text-nowrap">{{ txn.date|date:"M d, Y" }}</td>
+                                                <td>
+                                                    <div>{{ txn.description }}</div>
+                                                    <small class="text-muted">{{ txn.category }}</small>
+                                                </td>
+                                                <td class="text-nowrap">{{ currency_symbol }}{{ txn.total_amount|floatformat:2 }}</td>
+                                                <td class="text-nowrap">{{ currency_symbol }}{{ txn.your_share|floatformat:2 }}</td>
+                                                <td class="text-nowrap">{{ currency_symbol }}{{ txn.friend_share|floatformat:2 }}</td>
+                                                <td>
+                                                    {% if txn.you_paid %}
+                                                        <span class="badge bg-success">You</span>
+                                                    {% elif txn.friend_paid %}
+                                                        <span class="badge bg-info">{{ balance.name }}</span>
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+        {% else %}
+            <!-- Empty State -->
+            <div class="text-center py-5">
+                <h4 class="fw-bold text-muted">No Shared Expenses Yet</h4>
+                <p class="text-muted mb-4">
+                    Start creating shared expenses to track balances with friends and family.
+                </p>
+                <a href="{% url 'expense-create' %}" class="btn btn-primary">
+                    <i class="bi bi-plus-lg me-1"></i> Add Shared Expense
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Add Friend Modal -->
+<div class="modal fade" id="addFriendModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add New Friend</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger d-none" id="addFriendError"></div>
+                <form id="addFriendForm">
+                    <div class="mb-3">
+                        <label for="friendName" class="form-label">Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="friendName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="friendEmail" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="friendEmail">
+                    </div>
+                    <div class="mb-3">
+                        <label for="friendPhone" class="form-label">Phone</label>
+                        <input type="tel" class="form-control" id="friendPhone">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveFriendBtn">Save Friend</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Friend Modal -->
+<div class="modal fade" id="editFriendModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Edit Friend</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger d-none" id="editFriendError"></div>
+                <form id="editFriendForm">
+                    <input type="hidden" id="editFriendId">
+                    <div class="mb-3">
+                        <label for="editFriendName" class="form-label">Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="editFriendName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editFriendEmail" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="editFriendEmail">
+                    </div>
+                    <div class="mb-3">
+                        <label for="editFriendPhone" class="form-label">Phone</label>
+                        <input type="tel" class="form-control" id="editFriendPhone">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="updateFriendBtn">Update Friend</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const addModal = new bootstrap.Modal(document.getElementById('addFriendModal'));
+    const editModal = new bootstrap.Modal(document.getElementById('editFriendModal'));
+    
+    // Add Friend
+    document.getElementById('saveFriendBtn').addEventListener('click', function() {
+        const name = document.getElementById('friendName').value.trim();
+        const email = document.getElementById('friendEmail').value.trim();
+        const phone = document.getElementById('friendPhone').value.trim();
+        const errorDiv = document.getElementById('addFriendError');
+        
+        if (!name) {
+            errorDiv.textContent = 'Name is required';
+            errorDiv.classList.remove('d-none');
+            return;
+        }
+        
+        this.disabled = true;
+        this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Saving...';
+        
+        fetch("{% url 'friend-create-ajax' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({ name, email, phone })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                errorDiv.textContent = data.error;
+                errorDiv.classList.remove('d-none');
+            }
+        })
+        .catch(err => {
+            errorDiv.textContent = 'An error occurred';
+            errorDiv.classList.remove('d-none');
+        })
+        .finally(() => {
+            this.disabled = false;
+            this.textContent = 'Save Friend';
+        });
+    });
+    
+    // Edit Friend
+    document.querySelectorAll('.edit-friend-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const friendId = this.dataset.friendId;
+            const friendName = this.dataset.friendName;
+            const friendEmail = this.dataset.friendEmail;
+            const friendPhone = this.dataset.friendPhone;
+            
+            document.getElementById('editFriendId').value = friendId;
+            document.getElementById('editFriendName').value = friendName;
+            document.getElementById('editFriendEmail').value = friendEmail;
+            document.getElementById('editFriendPhone').value = friendPhone;
+            document.getElementById('editFriendError').classList.add('d-none');
+            
+            editModal.show();
+        });
+    });
+    
+    document.getElementById('updateFriendBtn').addEventListener('click', function() {
+        const friendId = document.getElementById('editFriendId').value;
+        const name = document.getElementById('editFriendName').value.trim();
+        const email = document.getElementById('editFriendEmail').value.trim();
+        const phone = document.getElementById('editFriendPhone').value.trim();
+        const errorDiv = document.getElementById('editFriendError');
+        
+        if (!name) {
+            errorDiv.textContent = 'Name is required';
+            errorDiv.classList.remove('d-none');
+            return;
+        }
+        
+        this.disabled = true;
+        this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Updating...';
+        
+        fetch(`/api/friend/${friendId}/update/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({ name, email, phone })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                errorDiv.textContent = data.error;
+                errorDiv.classList.remove('d-none');
+            }
+        })
+        .catch(err => {
+            errorDiv.textContent = 'An error occurred';
+            errorDiv.classList.remove('d-none');
+        })
+        .finally(() => {
+            this.disabled = false;
+            this.textContent = 'Update Friend';
+        });
+    });
+    
+    // Delete Friend
+    document.querySelectorAll('.delete-friend-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const friendId = this.dataset.friendId;
+            const friendName = this.dataset.friendName;
+            
+            if (!confirm(`Are you sure you want to delete ${friendName}? This cannot be undone.`)) {
+                return;
+            }
+            
+            fetch(`/api/friend/${friendId}/delete/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert(data.error);
+                }
+            })
+            .catch(err => {
+                alert('An error occurred');
+            });
+        });
+    });
+});
+</script>
+{% endblock %}

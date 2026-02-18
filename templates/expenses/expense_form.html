@@ -32,6 +32,7 @@
                                         <th style="min-width: 200px;">Description</th>
                                         <th style="min-width: 200px;">Category</th>
                                         <th style="min-width: 150px;">Payment Method</th>
+                                        <th style="min-width: 100px;">Cashback</th>
                                         <th style="width: 50px;"></th>
                                     </tr>
                                 </thead>
@@ -72,6 +73,34 @@
                                             </td>
                                             {% endif %}
                                         {% endfor %}
+                                        <td class="p-1">
+                                            <button type="button" class="btn btn-sm btn-outline-secondary cashback-toggle-btn" 
+                                                    title="Add cashback" 
+                                                    data-row-index="{{ forloop.counter0 }}">
+                                                <i class="bi bi-cash-coin"></i>
+                                            </button>
+                                            <div class="cashback-fields d-none mt-2" id="cashback-{{ forloop.counter0 }}">
+                                                {% for field in form %}
+                                                    {% if field.name == 'has_cashback' %}
+                                                        <input type="hidden" name="{{ field.html_name }}" value="false" class="cashback-enabled">
+                                                    {% elif field.name == 'cashback_type' %}
+                                                        <select name="{{ field.html_name }}" class="form-select form-select-sm mb-1" aria-label="Cashback type">
+                                                            <option value="">Type</option>
+                                                            <option value="PERCENTAGE">%</option>
+                                                            <option value="FIXED">{{ currency_symbol }}</option>
+                                                        </select>
+                                                    {% elif field.name == 'cashback_value' %}
+                                                        <input type="number" 
+                                                               name="{{ field.html_name }}" 
+                                                               class="form-control form-control-sm" 
+                                                               placeholder="Value"
+                                                               aria-label="Cashback value"
+                                                               step="0.01"
+                                                               min="0">
+                                                    {% endif %}
+                                                {% endfor %}
+                                            </div>
+                                        </td>
                                         <td class="text-center">
                                             {% if form.instance.pk %}
                                                 <div class="d-none">{{ form.DELETE }}</div> <!-- Hidden actual checkbox -->
@@ -97,9 +126,28 @@
                     
                     {% else %}
                     
+                        <!-- Expense Type Selection -->
+                        <div class="mb-4">
+                            <label class="form-label text-muted fw-bold">Expense Type</label>
+                            <div class="d-flex gap-3">
+                                {% for value, label in form.expense_type.field.choices %}
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="expense_type" 
+                                           id="expense_type_{{ value }}" value="{{ value }}"
+                                           {% if form.expense_type.value == value or value == 'personal' and not form.expense_type.value %}checked{% endif %}>
+                                    <label class="form-check-label" for="expense_type_{{ value }}">
+                                        {{ label }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <!-- Regular Expense Fields -->
                         {% for field in form %}
+                        {% if field.name != 'cashback_type' and field.name != 'cashback_value' and field.name != 'has_cashback' and field.name != 'expense_type' and field.name != 'participants_json' and field.name != 'payer_id' and field.name != 'participants' and field.name != 'payment_source' and field.name != 'credit_card' %}
                         <div class="mb-3">
-                            <label class="form-label text-muted">{{ field.label }}</label>
+                            <label class="form-label text-muted" for="{{ field.id_for_label }}">{{ field.label }}</label>
                             {% if field.field.widget.input_type == "checkbox" %}
                                 <div class="form-check">
                                     {{ field }}
@@ -122,7 +170,8 @@
                                 <input type="{% if field.name == 'date' %}date{% else %}{{ field.field.widget.input_type|default:'text' }}{% endif %}" 
                                     name="{{ field.name }}" 
                                     class="form-control"
-                                    {% if field.value %}value="{{ field.value|date:'Y-m-d'|default:field.value }}"{% endif %} 
+                                    id="{{ field.id_for_label }}"
+                                    {% if field.value %}value="{{ field.value|date:'Y-m-d'|default:field.value }}"{% endif %}
                                     {% if field.field.required %}required{% endif %}
                                     {% if field.field.widget.input_type == "number" %}step="0.01"{% endif %}>
                             {% endif %}
@@ -131,7 +180,146 @@
                             <div class="text-danger small mt-1">{{ field.errors.0 }}</div>
                             {% endif %}
                         </div>
+                        {% endif %}
                         {% endfor %}
+
+                        <!-- Account Selection Section -->
+                        <div id="payment-account-section" class="card bg-light border-0 mb-3">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-3 text-primary">
+                                    <i class="bi bi-wallet2 me-2"></i>Payment Account <span id="payment-account-required-badge" class="badge bg-danger">Required</span>
+                                </h6>
+                                <p class="text-muted small mb-3" id="payment-account-description">
+                                    Select the account from which this expense was paid
+                                </p>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label text-muted">
+                                        {{ form.payment_source.label }} <span class="text-danger" id="payment-source-required-indicator">*</span>
+                                        <span id="payment-source-balance" class="badge bg-info text-dark ms-2"></span>
+                                    </label>
+                                    {{ form.payment_source }}
+                                    {% if form.payment_source.errors %}
+                                    <div class="text-danger small mt-1">{{ form.payment_source.errors.0 }}</div>
+                                    {% endif %}
+                                    {% if form.payment_source.help_text %}
+                                    <small class="form-text text-muted d-block mt-1">{{ form.payment_source.help_text }}</small>
+                                    {% endif %}
+                                </div>
+                                
+                                <div id="payment-account-info" class="alert alert-info mb-0">
+                                    <small>
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        <strong>Note:</strong> The payment source options change based on your selected payment method. Accounts with insufficient balance are disabled but still visible.
+                                    </small>
+                                </div>
+                                
+                                <div id="payment-account-cash-notice" class="alert alert-warning mb-0 d-none">
+                                    <small>
+                                        <i class="bi bi-cash me-1"></i>
+                                        <strong>Cash Payment:</strong> Payment account selection is not needed for cash transactions.
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Shared Expense Section (Hidden by default) -->
+                        <div id="shared-expense-section" class="d-none">
+                            <div class="card bg-light border-0 mb-3">
+                                <div class="card-body">
+                                    <h6 class="card-subtitle mb-3 text-success">
+                                        <i class="bi bi-people me-2"></i>Shared Expense Details
+                                    </h6>
+                                    
+                                    <!-- Participants Dropdown -->
+                                    <div class="mb-3">
+                                        <label class="form-label text-success">Select Participants</label>
+                                        {{ form.participants }}
+                                        {% if form.participants.errors %}
+                                        <div class="text-danger small mt-1">{{ form.participants.errors.0 }}</div>
+                                        {% endif %}
+                                        <small class="form-text text-muted d-block">Hold Ctrl (Cmd on Mac) to select multiple friends</small>
+                                        <small class="form-text text-info d-block mt-1">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            Tip: If you're paying for friends only (not splitting with yourself), remove "You" from the participants below
+                                        </small>
+                                    </div>
+                                    
+                                    <!-- Participants with Share Amounts -->
+                                    <div class="mb-3">
+                                        <label class="form-label text-success">Share Amounts</label>
+                                        <div id="participants-container"></div>
+                                    </div>
+
+                                    <!-- Payer Selection -->
+                                    <div class="mb-3">
+                                        <label class="form-label text-success" for="payer-select">Who Paid?</label>
+                                        <select id="payer-select" class="form-select">
+                                            <option value="">Select payer...</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- Validation Messages -->
+                                    <div id="share-validation-message" class="alert alert-warning d-none">
+                                        <small><strong>Remaining to allocate:</strong> <span id="remaining-amount">{{ currency_symbol }}0</span></small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Hidden fields for shared expense data -->
+                        {{ form.participants_json }}
+                        {{ form.payer_id }}
+
+                        <!-- Cashback Toggle -->
+                        <div class="mb-3">
+                            <div class="form-check form-switch">
+                                {{ form.has_cashback }}
+                                <label class="form-check-label" for="{{ form.has_cashback.id_for_label }}">
+                                    <i class="bi bi-cash-coin me-1"></i>Apply Cashback
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Cashback Section -->
+                        <div id="cashback-section" class="{% if not form.has_cashback.value %}d-none{% endif %}">
+                            <div class="card bg-light border-0 mb-3">
+                                <div class="card-body">
+                                    <h6 class="card-subtitle mb-3 text-muted">
+                                        <i class="bi bi-cash-coin me-2"></i>Cashback Details
+                                    </h6>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label text-muted">{{ form.cashback_type.label }}</label>
+                                            {{ form.cashback_type }}
+                                            {% if form.cashback_type.errors %}
+                                            <div class="text-danger small mt-1">{{ form.cashback_type.errors.0 }}</div>
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label text-muted" for="id_cashback_value">{{ form.cashback_value.label }}</label>
+                                            <input type="number"
+                                                name="{{ form.cashback_value.name }}" 
+                                                class="form-control"
+                                                {% if form.cashback_value.value %}value="{{ form.cashback_value.value }}"{% endif %} 
+                                                step="0.01"
+                                                min="0"
+                                                placeholder="Enter value"
+                                                id="id_cashback_value">
+                                            {% if form.cashback_value.errors %}
+                                            <div class="text-danger small mt-1">{{ form.cashback_value.errors.0 }}</div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <div id="cashback-preview" class="alert alert-info mb-0" style="display: none;">
+                                        <small>
+                                            <strong>Cashback:</strong> <span id="cashback-amount">{{ currency_symbol }}0</span><br>
+                                            <strong>Effective Amount:</strong> <span id="effective-amount">{{ currency_symbol }}0</span>
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
 
                     {% endif %}
 
@@ -175,38 +363,503 @@
 {% endblock %}
 
 {% block scripts %}
+<style>
+    /* Style for disabled payment account section when Cash is selected */
+    #payment-account-section.opacity-75 {
+        opacity: 0.6;
+        pointer-events: none;
+    }
+    
+    /* Style for disabled options in payment source dropdown */
+    #id_payment_source option:disabled {
+        color: #dc3545 !important;
+        font-style: italic;
+        background-color: #f8f9fa;
+    }
+</style>
 <script>
+    const currencySymbol = '{{ currency_symbol }}';
     document.addEventListener('DOMContentLoaded', function() {
+        // --- Common Variables ---
+        const amountInput = document.querySelector('input[name="amount"]');
+        
+        // --- Expense Type Toggle Logic ---
+        const expenseTypeRadios = document.querySelectorAll('input[name="expense_type"]');
+        const sharedExpenseSection = document.getElementById('shared-expense-section');
+        
+        // --- Participant Management Logic ---
+        let participants = [];
+        const participantsContainer = document.getElementById('participants-container');
+        const participantsDropdown = document.querySelector('select[name="participants"]');
+        const participantsJsonInput = document.querySelector('input[name="participants_json"]');
+        
+        // Only proceed if we're in single form mode (not formset)
+        if (participantsContainer && participantsDropdown && participantsJsonInput) {
+            
+            // Initialize participants from hidden field or from dropdown selection
+            function initializeParticipants() {
+                try {
+                    const jsonValue = participantsJsonInput.value;
+                    console.log('Initializing participants with JSON:', jsonValue);
+                    if (jsonValue) {
+                        participants = JSON.parse(jsonValue);
+                    } else {
+                        // Start with current user
+                        participants = [{
+                            name: 'You',
+                            is_user: true,
+                            share_amount: ''
+                        }];
+                    }
+                } catch (e) {
+                    console.error('Error parsing participants JSON:', e);
+                    participants = [{
+                        name: 'You',
+                        is_user: true,
+                        share_amount: ''
+                    }];
+                }
+                
+                console.log('Participants loaded:', participants);
+                renderParticipants();
+            }
+            
+            // Listen to dropdown changes
+            participantsDropdown.addEventListener('change', function() {
+                // Get selected friends
+                const selectedOptions = Array.from(this.selectedOptions);
+                
+                // Check if user is already in participants
+                const userParticipant = participants.find(p => p.is_user);
+                const newParticipants = [];
+                
+                // Keep user if they exist
+                if (userParticipant) {
+                    newParticipants.push(userParticipant);
+                }
+                
+                // Add selected friends
+                selectedOptions.forEach(option => {
+                    const friendName = option.text;
+                    // Check if this friend already exists in participants to preserve share amount
+                    const existingParticipant = participants.find(p => p.name === friendName && !p.is_user);
+                    newParticipants.push({
+                        name: friendName,
+                        is_user: false,
+                        share_amount: existingParticipant?.share_amount || ''
+                    });
+                });
+                
+                participants = newParticipants;
+                renderParticipants();
+            });
+            
+            // Add "Include Me" button
+            const includeMeBtn = document.createElement('button');
+            includeMeBtn.type = 'button';
+            includeMeBtn.className = 'btn btn-sm btn-outline-primary mt-2';
+            includeMeBtn.id = 'include-me-btn';
+            includeMeBtn.innerHTML = '<i class="bi bi-person-plus me-1"></i> Include Me';
+            includeMeBtn.style.display = 'none'; // Hidden by default
+            participantsDropdown.parentElement.appendChild(includeMeBtn);
+            
+            includeMeBtn.addEventListener('click', function() {
+                // Add user back to participants
+                participants.unshift({
+                    name: 'You',
+                    is_user: true,
+                    share_amount: ''
+                });
+                renderParticipants();
+            });
+        
+            // Render all participants with share amount inputs
+            function renderParticipants() {
+                participantsContainer.innerHTML = '';
+                
+                // Check if user is in participants
+                const hasUser = participants.some(p => p.is_user);
+                includeMeBtn.style.display = hasUser ? 'none' : 'inline-block';
+                
+                participants.forEach((participant, index) => {
+                    const participantDiv = document.createElement('div');
+                    participantDiv.className = 'participant-row mb-2 p-2 border rounded bg-white';
+                    participantDiv.innerHTML = `
+                        <div class="row g-2 align-items-center">
+                            <div class="col-md-5">
+                                <strong>${participant.name}</strong>
+                                ${participant.is_user ? '<span class="badge bg-primary ms-2">You</span>' : ''}
+                            </div>
+                            <div class="col-md-5">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">${currencySymbol}</span>
+                                    <input type="number"
+                                           class="form-control participant-share" 
+                                           placeholder="Share amount"
+                                           value="${participant.share_amount || ''}"
+                                           data-index="${index}"
+                                           step="0.01"
+                                           min="0">
+                                </div>
+                            </div>
+                            <div class="col-md-2 text-end">
+                                <button type="button" 
+                                        class="btn btn-sm btn-outline-danger remove-participant-btn" 
+                                        data-index="${index}"
+                                        title="Remove ${participant.name}">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    
+                    participantsContainer.appendChild(participantDiv);
+                });
+                
+                // Attach event listeners
+                attachParticipantEventListeners();
+                updateParticipantsJson();
+                updatePayerDropdown();
+                calculateShares();
+            }
+            
+            // Attach event listeners to participant inputs
+            function attachParticipantEventListeners() {
+                // Share amount inputs
+                document.querySelectorAll('.participant-share').forEach(input => {
+                    input.addEventListener('input', function() {
+                        const index = parseInt(this.dataset.index);
+                        participants[index].share_amount = this.value;
+                        updateParticipantsJson();
+                        calculateShares();
+                    });
+                });
+                
+                // Remove buttons
+                document.querySelectorAll('.remove-participant-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const index = parseInt(this.dataset.index);
+                        const participant = participants[index];
+                        
+                        // If removing a friend, also deselect from dropdown
+                        if (!participant.is_user) {
+                            const options = Array.from(participantsDropdown.options);
+                            const option = options.find(opt => opt.text === participant.name);
+                            if (option) {
+                                option.selected = false;
+                            }
+                        }
+                        
+                        participants.splice(index, 1);
+                        renderParticipants();
+                    });
+                });
+            }
+            
+            // Update hidden JSON field
+            function updateParticipantsJson() {
+                participantsJsonInput.value = JSON.stringify(participants);
+            }
+            
+            // --- Payer Selection Logic ---
+            const payerSelect = document.getElementById('payer-select');
+            const payerIdInput = document.querySelector('input[name="payer_id"]');
+            
+            // Update payer dropdown with current participants
+            function updatePayerDropdown() {
+                if (!payerSelect || !payerIdInput) return;
+                
+                const currentPayer = payerIdInput.value;
+                payerSelect.innerHTML = '<option value="">Select payer...</option>';
+                
+                // Always add "You" as the first option (even if not in participants)
+                const hasUserInParticipants = participants.some(p => p.is_user);
+                const youOption = document.createElement('option');
+                youOption.value = 'You';
+                youOption.textContent = 'You';
+                
+                if (currentPayer === 'You' || (!currentPayer && !hasUserInParticipants)) {
+                    youOption.selected = true;
+                    payerIdInput.value = 'You';
+                }
+                
+                payerSelect.appendChild(youOption);
+                
+                // Add all other participants (excluding user if already added)
+                participants.forEach(participant => {
+                    if (participant.name && participant.name.trim() && !participant.is_user) {
+                        const option = document.createElement('option');
+                        option.value = participant.name.trim();
+                        option.textContent = participant.name.trim();
+                        
+                        // Mark as selected if it matches current payer
+                        if (participant.name.trim() === currentPayer) {
+                            option.selected = true;
+                        }
+                        
+                        payerSelect.appendChild(option);
+                    }
+                });
+                
+                // If user is in participants, update their option to show they're selected
+                if (hasUserInParticipants) {
+                    const userParticipant = participants.find(p => p.is_user);
+                    if (userParticipant && currentPayer === userParticipant.name.trim()) {
+                        youOption.selected = true;
+                        payerIdInput.value = 'You';
+                    }
+                }
+            }
+            
+            // Handle payer selection change
+            if (payerSelect) {
+                payerSelect.addEventListener('change', function() {
+                    if (payerIdInput) payerIdInput.value = this.value;
+                });
+            }
+            
+            // --- Share Amount Calculation and Validation ---
+            const shareValidationMessage = document.getElementById('share-validation-message');
+            const remainingAmountContainer = shareValidationMessage ? shareValidationMessage.querySelector('small') : null;
+            
+            // Calculate equal split when participants are added or amount changes
+            function calculateEqualSplit() {
+                const totalAmount = parseFloat(amountInput?.value) || 0;
+                const participantCount = participants.length;
+                
+                if (totalAmount > 0 && participantCount > 0) {
+                    const equalShare = (totalAmount / participantCount).toFixed(2);
+                    
+                    // Only update shares that are empty
+                    participants.forEach(participant => {
+                        if (!participant.share_amount || participant.share_amount === '') {
+                            participant.share_amount = equalShare;
+                        }
+                    });
+                    
+                    renderParticipants();
+                }
+            }
+            
+            // Calculate and display remaining amount
+            function calculateShares() {
+                if (!shareValidationMessage || !remainingAmountContainer) return;
+
+                const totalAmount = parseFloat(amountInput?.value) || 0;
+                
+                if (totalAmount <= 0) {
+                    shareValidationMessage.classList.add('d-none');
+                    return;
+                }
+                
+                let totalShares = 0;
+                participants.forEach(participant => {
+                    const shareAmount = parseFloat(participant.share_amount) || 0;
+                    totalShares += shareAmount;
+                });
+                
+                const remaining = totalAmount - totalShares;
+                
+                if (Math.abs(remaining) > 0.01) {
+                    shareValidationMessage.classList.remove('d-none');
+
+                    // Change alert class based on whether we're over or under
+                    if (remaining < 0) {
+                        shareValidationMessage.classList.remove('alert-warning');
+                        shareValidationMessage.classList.add('alert-danger');
+                        remainingAmountContainer.innerHTML = '<strong>Over-allocated by:</strong> <span id="remaining-amount">' + currencySymbol + Math.abs(remaining).toFixed(2) + '</span>';
+                    } else {
+                        shareValidationMessage.classList.remove('alert-danger');
+                        shareValidationMessage.classList.add('alert-warning');
+                        remainingAmountContainer.innerHTML = '<strong>Remaining to allocate:</strong> <span id="remaining-amount">' + currencySymbol + remaining.toFixed(2) + '</span>';
+                    }
+                } else {
+                    shareValidationMessage.classList.add('d-none');
+                }
+            }
+            
+            // Listen to amount changes
+            if (amountInput) {
+                amountInput.addEventListener('input', function() {
+                    calculateEqualSplit();
+                    calculateShares();
+                });
+            }
+            
+            // Add button to auto-split equally
+            const autoSplitBtn = document.createElement('button');
+            autoSplitBtn.type = 'button';
+            autoSplitBtn.className = 'btn btn-sm btn-outline-secondary mt-2';
+            autoSplitBtn.id = 'auto-split-btn';
+            autoSplitBtn.innerHTML = '<i class="bi bi-calculator me-1"></i> Split Equally';
+            participantsContainer.insertAdjacentElement('afterend', autoSplitBtn);
+            
+            autoSplitBtn.addEventListener('click', function() {
+                const totalAmount = parseFloat(amountInput?.value) || 0;
+                const participantCount = participants.length;
+                
+                if (totalAmount > 0 && participantCount > 0) {
+                    const equalShare = (totalAmount / participantCount).toFixed(2);
+                    
+                    // Update all shares
+                    participants.forEach(participant => {
+                        participant.share_amount = equalShare;
+                    });
+                    
+                    // Adjust last participant's share to account for rounding
+                    if (participants.length > 0) {
+                        let totalShares = 0;
+                        for (let i = 0; i < participants.length - 1; i++) {
+                            totalShares += parseFloat(participants[i].share_amount);
+                        }
+                        participants[participants.length - 1].share_amount = (totalAmount - totalShares).toFixed(2);
+                    }
+                    
+                    renderParticipants();
+                }
+            });
+
+        } // End of participant management if block
+        
+        function toggleExpenseType() {
+            const selectedType = document.querySelector('input[name="expense_type"]:checked')?.value;
+            
+            if (selectedType === 'shared') {
+                sharedExpenseSection.classList.remove('d-none');
+                if (participantsContainer) {
+                    initializeParticipants();
+                }
+            } else {
+                sharedExpenseSection.classList.add('d-none');
+            }
+        }
+        
+        expenseTypeRadios.forEach(radio => {
+            radio.addEventListener('change', toggleExpenseType);
+        });
+        
+        // Initialize on page load
+        toggleExpenseType();
+
+        // --- Cashback Toggle Logic ---
+        const hasCashbackCheckbox = document.getElementById('id_has_cashback');
+        const cashbackSection = document.getElementById('cashback-section');
+        const cashbackTypeSelect = document.querySelector('select[name="cashback_type"]');
+        const cashbackValueInput = document.querySelector('input[name="cashback_value"]');
+        const cashbackPreview = document.getElementById('cashback-preview');
+        const cashbackAmountSpan = document.getElementById('cashback-amount');
+        const effectiveAmountSpan = document.getElementById('effective-amount');
+
+        if (hasCashbackCheckbox && cashbackSection) {
+            hasCashbackCheckbox.addEventListener('change', function() {
+                if (this.checked) {
+                    cashbackSection.classList.remove('d-none');
+                } else {
+                    cashbackSection.classList.add('d-none');
+                    if (cashbackPreview) cashbackPreview.style.display = 'none';
+                }
+            });
+
+            // Calculate and show cashback preview
+            function updateCashbackPreview() {
+                const amount = parseFloat(amountInput?.value) || 0;
+                const cashbackType = cashbackTypeSelect?.value;
+                const cashbackValue = parseFloat(cashbackValueInput?.value) || 0;
+
+                if (hasCashbackCheckbox?.checked && amount > 0 && cashbackValue > 0 && cashbackType) {
+                    let cashbackAmount = 0;
+                    
+                    if (cashbackType === 'PERCENTAGE') {
+                        cashbackAmount = (amount * cashbackValue) / 100;
+                    } else if (cashbackType === 'FIXED') {
+                        cashbackAmount = cashbackValue;
+                    }
+
+                    const effectiveAmount = amount - cashbackAmount;
+
+                    if (cashbackAmountSpan) cashbackAmountSpan.textContent = currencySymbol + cashbackAmount.toFixed(2);
+                    if (effectiveAmountSpan) effectiveAmountSpan.textContent = currencySymbol + effectiveAmount.toFixed(2);
+                    if (cashbackPreview) cashbackPreview.style.display = 'block';
+                } else {
+                    if (cashbackPreview) cashbackPreview.style.display = 'none';
+                }
+            }
+
+            // Attach event listeners for real-time preview
+            if (amountInput) amountInput.addEventListener('input', updateCashbackPreview);
+            if (cashbackTypeSelect) cashbackTypeSelect.addEventListener('change', updateCashbackPreview);
+            if (cashbackValueInput) cashbackValueInput.addEventListener('input', updateCashbackPreview);
+
+            // Initial preview on page load
+            updateCashbackPreview();
+        }
+
+        // --- Formset Logic ---
         const addBtn = document.getElementById('add-form');
         const container = document.getElementById('formset-container');
         const totalForms = document.getElementById('id_form-TOTAL_FORMS');
 
+        // Cashback toggle for formset rows
+        const formsetClickDelegateRoot = document.body || document;
+        formsetClickDelegateRoot.addEventListener('click', function(e) {
+            if (e.target.closest('.cashback-toggle-btn')) {
+                const btn = e.target.closest('.cashback-toggle-btn');
+                const rowIndex = btn.getAttribute('data-row-index');
+                const cashbackDiv = document.getElementById('cashback-' + rowIndex);
+                const cashbackEnabledInput = cashbackDiv.querySelector('.cashback-enabled');
+                
+                if (cashbackDiv.classList.contains('d-none')) {
+                    cashbackDiv.classList.remove('d-none');
+                    btn.classList.remove('btn-outline-secondary');
+                    btn.classList.add('btn-success');
+                    if (cashbackEnabledInput) cashbackEnabledInput.value = 'true';
+                } else {
+                    cashbackDiv.classList.add('d-none');
+                    btn.classList.remove('btn-success');
+                    btn.classList.add('btn-outline-secondary');
+                    if (cashbackEnabledInput) cashbackEnabledInput.value = 'false';
+                    // Clear cashback fields
+                    cashbackDiv.querySelectorAll('input, select').forEach(input => {
+                        if (!input.classList.contains('cashback-enabled')) {
+                            input.value = '';
+                        }
+                    });
+                }
+            }
+        });
+
         // Add Row
-        if (addBtn) {
+        if (addBtn && container && totalForms) {
             addBtn.addEventListener('click', function() {
                 const currentFormCount = parseInt(totalForms.value);
                 const forms = container.getElementsByClassName('form-row');
                 
-                // Clone the first row as a template if no rows exist (edge case), 
-                // but typically we clone the last one. If we deleted all, implementation gets tricky, 
-                // so we won't allow deleting the last new row if it's the only one, or we keep a hidden template.
-                // For simplicity, we assume there's always at least one row or we use the last visible one.
-                
                 let templateRow = forms[forms.length - 1];
                 let newForm = templateRow.cloneNode(true);
                 
-                // Regex to replace numbers in name/id
-                // We need to handle cases where the last row might have index 5 (if we deleted 2,3,4) 
-                // OR we strictly re-index on delete. Strat: strictly re-index on delete makes this simpler?
-                // Actually, just append with new index is safer if we don't hold state.
-                
                 const regex = new RegExp(`form-(\\d+)-`, 'g');
                 newForm.innerHTML = newForm.innerHTML.replace(regex, `form-${currentFormCount}-`);
+                
+                // Update cashback button data-row-index and cashback div id
+                const cashbackBtn = newForm.querySelector('.cashback-toggle-btn');
+                if (cashbackBtn) {
+                    cashbackBtn.setAttribute('data-row-index', currentFormCount);
+                    cashbackBtn.classList.remove('btn-success');
+                    cashbackBtn.classList.add('btn-outline-secondary');
+                }
+                
+                const cashbackDiv = newForm.querySelector('[id^="cashback-"]');
+                if (cashbackDiv) {
+                    cashbackDiv.id = 'cashback-' + currentFormCount;
+                    cashbackDiv.classList.add('d-none');
+                }
                 
                 const inputs = newForm.querySelectorAll('input, select');
                 inputs.forEach(input => {
                     if (input.name.includes('date')) {
                         input.value = new Date().toISOString().split('T')[0];
+                    } else if (input.classList.contains('cashback-enabled')) {
+                        input.value = 'false';
                     } else {
                         input.value = '';
                     }
@@ -216,10 +869,6 @@
                 
                 // Reset text content of non-inputs if any
                 newForm.querySelectorAll('.text-danger').forEach(el => el.remove());
-
-                // IMPORTANT: The cloned row might be an "existing" row (with delete checkbox).
-                // We need to convert it to a "new" row UI (remove hidden DELETE, change button).
-                // But simplified: Just resetting content is usually enough if we verify the "Delete" button.
                 
                 // Change delete button to remove button
                 const actionCell = newForm.querySelector('td.text-center');
@@ -234,63 +883,65 @@
             });
         }
 
-        // Delegate click for remove/delete
-        container.addEventListener('click', function(e) {
-            // Handle Remove (New Row)
-            if (e.target.closest('.remove-row')) {
-                const row = e.target.closest('tr');
-                row.remove();
-                updateFormIndices();
-            }
-            
-            // Handle Delete (Existing Row)
-            if (e.target.closest('.delete-row')) {
-                const row = e.target.closest('tr');
-                const deleteInput = row.querySelector('input[name$="-DELETE"]');
-                if (deleteInput) {
-                    deleteInput.checked = true;
-                    row.style.display = 'none';
-                    // We don't verify fields on hidden rows, but good execution would require bypassing required attrs.
-                    // However, standard browser form submission might block if hidden inputs are required. 
-                    // Django forms usually don't put 'required' on fields if it's conditional, but we rely on browser.
-                    // Let's remove 'required' from inputs in this row to avoid submission errors.
-                    row.querySelectorAll('input, select').forEach(input => {
-                        input.removeAttribute('required');
-                    });
+        if (container && totalForms) {
+            // Delegate click for remove/delete
+            container.addEventListener('click', function(e) {
+                // Handle Remove (New Row)
+                if (e.target.closest('.remove-row')) {
+                    const row = e.target.closest('tr');
+                    row.remove();
+                    updateFormIndices();
                 }
-            }
-        });
-
-        function updateFormIndices() {
-            // Re-index all forms to avoid validation errors with ManagementForm
-            const rows = container.querySelectorAll('.form-row');
-            totalForms.value = rows.length;
-            
-            rows.forEach((row, index) => {
-                // Determine pattern for current row based on its existing content (usually form-N-)
-                // But simpler: just replace ANY form-\d+- with form-index- in the attributes we care about.
                 
-                // Update inputs, selects, textareas
-                const inputs = row.querySelectorAll('input, select, textarea');
-                inputs.forEach(input => {
-                    if (input.name) {
-                        input.name = input.name.replace(/form-\d+-/, `form-${index}-`);
+                // Handle Delete (Existing Row)
+                if (e.target.closest('.delete-row')) {
+                    const row = e.target.closest('tr');
+                    const deleteInput = row.querySelector('input[name$="-DELETE"]');
+                    if (deleteInput) {
+                        deleteInput.checked = true;
+                        row.style.display = 'none';
+                        // We don't verify fields on hidden rows, but good execution would require bypassing required attrs.
+                        // However, standard browser form submission might block if hidden inputs are required. 
+                        // Django forms usually don't put 'required' on fields if it's conditional, but we rely on browser.
+                        // Let's remove 'required' from inputs in this row to avoid submission errors.
+                        row.querySelectorAll('input, select').forEach(input => {
+                            input.removeAttribute('required');
+                        });
                     }
-                    if (input.id) {
-                        input.id = input.id.replace(/form-\d+-/, `form-${index}-`);
-                    }
-                });
-
-                // Update labels if any (though we use little labels in this table)
-                row.querySelectorAll('label').forEach(label => {
-                    if (label.htmlFor) {
-                        label.htmlFor = label.htmlFor.replace(/form-\d+-/, `form-${index}-`);
-                    }
-                });
-                
-                // Update hidden DELETE inputs or other specifics if needed
-                // The above generic input handler covers typical django form fields.
+                }
             });
+
+            function updateFormIndices() {
+                // Re-index all forms to avoid validation errors with ManagementForm
+                const rows = container.querySelectorAll('.form-row');
+                totalForms.value = rows.length;
+                
+                rows.forEach((row, index) => {
+                    // Determine pattern for current row based on its existing content (usually form-N-)
+                    // But simpler: just replace ANY form-\d+- with form-index- in the attributes we care about.
+                    
+                    // Update inputs, selects, textareas
+                    const inputs = row.querySelectorAll('input, select, textarea');
+                    inputs.forEach(input => {
+                        if (input.name) {
+                            input.name = input.name.replace(/form-\d+-/, `form-${index}-`);
+                        }
+                        if (input.id) {
+                            input.id = input.id.replace(/form-\d+-/, `form-${index}-`);
+                        }
+                    });
+
+                    // Update labels if any (though we use little labels in this table)
+                    row.querySelectorAll('label').forEach(label => {
+                        if (label.htmlFor) {
+                            label.htmlFor = label.htmlFor.replace(/form-\d+-/, `form-${index}-`);
+                        }
+                    });
+                    
+                    // Update hidden DELETE inputs or other specifics if needed
+                    // The above generic input handler covers typical django form fields.
+                });
+            }
         }
     });
 </script>
@@ -306,8 +957,8 @@
             let activeSelectId = null; 
 
             // Delegation for + buttons (covers both formset and single form)
-            // We attach to document.body to ensure we catch everything, or a common wrapper if available.
-            document.body.addEventListener('click', function(e) {
+            const categoryClickDelegateRoot = document.body || document;
+            categoryClickDelegateRoot.addEventListener('click', function(e) {
                 const btn = e.target.closest('.add-category-btn');
                 if (btn) {
                     const select = btn.previousElementSibling;
@@ -476,44 +1127,241 @@
         container.addEventListener('keydown', function(e) {
             // Check if key is Enter
             if (e.key === 'Enter') {
-                const target = e.target;
+
+                // Allow Enter in textarea
+                if (e.target.tagName === 'TEXTAREA') {
+                    return;
+                }
                 
-                // Block on Inputs (except hidden/submit/reset/button)
-                const isInput = target.matches('input') && !['submit', 'reset', 'button', 'hidden'].includes(target.type);
-                // Block on Selects
-                const isSelect = target.matches('select');
-                // Block on Textareas (optional, usually Enter in textarea means new line, so maybe NOT block?)
-                // Usually we don't want to submit on Enter in textarea unless it's a chat app.
-                // But for Description/Notes, new line is valid. So let's NOT block textareas.
-                
-                if (isInput || isSelect) {
+                // Prevent form submission for input and select
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
                     e.preventDefault();
-                    console.log('Blocked Enter key submission');
-                    
-                    // UX Improvement: Move focus to next field instead?
-                    // For now, just blocking is the priority.
-                    return false;
                 }
             }
         });
+        
+        // --- Dynamic Payment Source Logic ---
+        const paymentMethodSelect = document.querySelector('select[name="payment_method"]');
+        const paymentSourceSelect = document.getElementById('id_payment_source');
+        const paymentSourceBalanceBadge = document.getElementById('payment-source-balance');
+        const paymentAccountSection = document.getElementById('payment-account-section');
+        const paymentAccountRequiredBadge = document.getElementById('payment-account-required-badge');
+        const paymentSourceRequiredIndicator = document.getElementById('payment-source-required-indicator');
+        const paymentAccountDescription = document.getElementById('payment-account-description');
+        const paymentAccountInfo = document.getElementById('payment-account-info');
+        const paymentAccountCashNotice = document.getElementById('payment-account-cash-notice');
+        const amountInput = document.querySelector('input[name="amount"]');
+        
+        // Function to update payment source options based on payment method and amount
+        async function updatePaymentSources() {
+            if (!paymentMethodSelect || !paymentSourceSelect) return;
+            
+            const paymentMethod = paymentMethodSelect.value;
+            const amount = amountInput ? amountInput.value : '0';
+            
+            // Show loading state
+            paymentSourceSelect.disabled = true;
+            paymentSourceSelect.innerHTML = '<option value="">Loading...</option>';
+            
+            try {
+                const response = await fetch(`/payment-sources/ajax/?payment_method=${encodeURIComponent(paymentMethod)}&amount=${encodeURIComponent(amount)}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Clear existing options
+                    paymentSourceSelect.innerHTML = '';
+                    
+                    // Handle Cash payment method
+                    if (paymentMethod === 'Cash' || data.sources.length === 0) {
+                        // Disable entire section for Cash
+                        paymentSourceSelect.disabled = true;
+                        paymentSourceSelect.innerHTML = '<option value="">Not required for Cash</option>';
+                        paymentSourceSelect.required = false;
+                        paymentSourceBalanceBadge.textContent = '';
+                        
+                        // Update UI to show Cash notice
+                        if (paymentAccountSection) {
+                            paymentAccountSection.classList.add('opacity-75');
+                        }
+                        if (paymentAccountRequiredBadge) {
+                            paymentAccountRequiredBadge.classList.add('d-none');
+                        }
+                        if (paymentSourceRequiredIndicator) {
+                            paymentSourceRequiredIndicator.classList.add('d-none');
+                        }
+                        if (paymentAccountDescription) {
+                            paymentAccountDescription.classList.add('d-none');
+                        }
+                        if (paymentAccountInfo) {
+                            paymentAccountInfo.classList.add('d-none');
+                        }
+                        if (paymentAccountCashNotice) {
+                            paymentAccountCashNotice.classList.remove('d-none');
+                        }
+                        return;
+                    }
+                    
+                    // Enable section for non-Cash payments
+                    if (paymentAccountSection) {
+                        paymentAccountSection.classList.remove('opacity-75');
+                    }
+                    if (paymentAccountRequiredBadge) {
+                        paymentAccountRequiredBadge.classList.remove('d-none');
+                    }
+                    if (paymentSourceRequiredIndicator) {
+                        paymentSourceRequiredIndicator.classList.remove('d-none');
+                    }
+                    if (paymentAccountDescription) {
+                        paymentAccountDescription.classList.remove('d-none');
+                    }
+                    if (paymentAccountInfo) {
+                        paymentAccountInfo.classList.remove('d-none');
+                    }
+                    if (paymentAccountCashNotice) {
+                        paymentAccountCashNotice.classList.add('d-none');
+                    }
+                    
+                    // Add default option
+                    const defaultOption = document.createElement('option');
+                    defaultOption.value = '';
+                    defaultOption.textContent = 'Select Payment Source';
+                    paymentSourceSelect.appendChild(defaultOption);
+                    
+                    // Add payment sources
+                    data.sources.forEach(source => {
+                        const option = document.createElement('option');
+                        option.value = source.id;
+                        
+                        // Create display text
+                        let displayText = source.display;
+                        if (source.bank) {
+                            displayText += ` (${source.bank})`;
+                        }
+                        displayText += ` - ${source.balance_display}`;
+                        
+                        option.textContent = displayText;
+                        
+                        // Disable if insufficient funds (but keep visible in dropdown)
+                        if (!source.sufficient_funds) {
+                            option.disabled = true;
+                            option.textContent += ' ⚠️ Insufficient Balance';
+                            option.style.color = '#dc3545';
+                            option.style.fontWeight = 'bold';
+                        }
+                        
+                        // Store balance info in data attribute
+                        option.dataset.balance = source.balance;
+                        option.dataset.balanceDisplay = source.balance_display;
+                        option.dataset.sufficientFunds = source.sufficient_funds;
+                        
+                        paymentSourceSelect.appendChild(option);
+                    });
+                    
+                    // Enable the select and make it required
+                    paymentSourceSelect.disabled = false;
+                    paymentSourceSelect.required = true;
+                    
+                    // Update balance badge when selection changes
+                    paymentSourceSelect.addEventListener('change', function() {
+                        const selectedOption = this.options[this.selectedIndex];
+                        if (selectedOption && selectedOption.dataset.balanceDisplay) {
+                            paymentSourceBalanceBadge.textContent = `Balance: ${selectedOption.dataset.balanceDisplay}`;
+                            paymentSourceBalanceBadge.classList.remove('d-none');
+                            
+                            // Add visual feedback if insufficient funds selected (shouldn't happen, but just in case)
+                            if (selectedOption.dataset.sufficientFunds === 'false') {
+                                paymentSourceBalanceBadge.classList.remove('bg-info');
+                                paymentSourceBalanceBadge.classList.add('bg-danger');
+                            } else {
+                                paymentSourceBalanceBadge.classList.remove('bg-danger');
+                                paymentSourceBalanceBadge.classList.add('bg-info');
+                            }
+                        } else {
+                            paymentSourceBalanceBadge.textContent = '';
+                            paymentSourceBalanceBadge.classList.add('d-none');
+                        }
+                    });
+                    
+                } else {
+                    console.error('Error fetching payment sources:', data.error);
+                    paymentSourceSelect.innerHTML = '<option value="">Error loading sources</option>';
+                    paymentSourceSelect.disabled = false;
+                    paymentSourceSelect.required = false;
+                }
+            } catch (error) {
+                console.error('Error fetching payment sources:', error);
+                paymentSourceSelect.innerHTML = '<option value="">Error loading sources</option>';
+                paymentSourceSelect.disabled = false;
+                paymentSourceSelect.required = false;
+            }
+        }
+        
+        // Update payment sources when payment method or amount changes
+        if (paymentMethodSelect) {
+            paymentMethodSelect.addEventListener('change', updatePaymentSources);
+        }
+        
+        if (amountInput) {
+            let amountTimeout;
+            let previousAmount = amountInput.value;
 
-        // Debugging: Log form submissions to console (invisible to user but verifies logic if we could see logs)
-        const form = document.querySelector('form');
-        if (form) {
-            form.addEventListener('submit', function(e) {
-                // If the submitter is NOT the save button, prevent it?
-                // `e.submitter` is the element that triggered the submit (button or form itself if Enter)
-                // If triggered by Enter, `submitter` might be null or the first button.
+            function resetPaymentSelectionsOnAmountEdit() {
+                // Reset payment method to Cash and clear account selection.
+                if (paymentMethodSelect) {
+                    paymentMethodSelect.value = 'Cash';
+                    paymentMethodSelect.dispatchEvent(new Event('change'));
+                }
+
+                if (paymentSourceSelect) {
+                    paymentSourceSelect.value = '';
+                    paymentSourceSelect.innerHTML = '<option value="">Select Payment Method First</option>';
+                    paymentSourceSelect.disabled = true;
+                    paymentSourceSelect.required = false;
+                }
+
+                if (paymentSourceBalanceBadge) {
+                    paymentSourceBalanceBadge.textContent = '';
+                    paymentSourceBalanceBadge.classList.add('d-none');
+                }
+
+                // Reset account-section UI to neutral state
+                if (paymentAccountSection) {
+                    paymentAccountSection.classList.remove('opacity-75');
+                }
+                if (paymentAccountRequiredBadge) {
+                    paymentAccountRequiredBadge.classList.remove('d-none');
+                }
+                if (paymentSourceRequiredIndicator) {
+                    paymentSourceRequiredIndicator.classList.remove('d-none');
+                }
+                if (paymentAccountDescription) {
+                    paymentAccountDescription.classList.remove('d-none');
+                }
+                if (paymentAccountInfo) {
+                    paymentAccountInfo.classList.remove('d-none');
+                }
+                if (paymentAccountCashNotice) {
+                    paymentAccountCashNotice.classList.add('d-none');
+                }
+            }
+            
+            amountInput.addEventListener('input', function() {
+                clearTimeout(amountTimeout);
                 
-                // Chrome/Firefox: if Enter pressed, submitter is usually the first submit button in the form.
-                // In this form, it's the "Save Changes" button.
+                const currentAmount = this.value;
                 
-                // But we BLOCKED Enter on inputs.
-                // So if we are here, it should only be from a CLICK on the button.
-                
-                console.log('Form submitting...', e.submitter);
+                // Only clear and update if amount actually changed
+                if (currentAmount !== previousAmount) {
+                    amountTimeout = setTimeout(() => {
+                        resetPaymentSelectionsOnAmountEdit();
+                        previousAmount = currentAmount;
+                    }, 500); // 500ms debounce
+                }
             });
         }
+        
+        // Initial load of payment sources
+        updatePaymentSources();
     });
 </script>
 

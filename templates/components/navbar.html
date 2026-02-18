@@ -16,7 +16,7 @@
             <div class="d-lg-none ms-auto me-3 dropdown">
                 <a class="nav-link dropdown-toggle no-arrow p-0 d-flex align-items-center justify-content-center position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false" style="width: 38px; height: 38px;">
                     <i class="bi bi-bell fs-4"></i>
-                    <span class="position-absolute translate-middle badge rounded-pill bg-danger border border-light {% if not has_unread_notifications %}visually-hidden{% endif %}" 
+                    <span class="position-absolute translate-middle badge rounded-pill bg-danger border border-light {% if not has_unread_notifications %}visually-hidden{% endif %}"
                           id="notification-badge-mobile"
                           style="top: 5px; right: -5px; font-size: 0.65rem; padding: 0.25em 0.4em;">
                         {{ unread_notifications_count }}
@@ -92,6 +92,11 @@
                             Analytics
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a href="{% url 'balance-summary' %}" class="nav-link {% if 'balance-summary' in request.resolver_match.url_name %}active{% endif %}">
+                            Balances
+                        </a>
+                    </li>
                     <!-- Settings Link (Removed, moving to dropdown) -->
 
                     <!-- Vertical Divider (Desktop) -->
@@ -115,7 +120,7 @@
                     <li class="nav-item dropdown d-none d-lg-block ms-2">
                         <a class="nav-link dropdown-toggle no-arrow p-0 d-flex align-items-center justify-content-center position-relative" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false" style="width: 38px; height: 38px;">
                             <i class="bi bi-bell fs-6"></i>
-                            <span class="position-absolute translate-middle badge rounded-pill bg-danger border border-light {% if not has_unread_notifications %}visually-hidden{% endif %}" 
+                            <span class="position-absolute translate-middle badge rounded-pill bg-danger border border-light {% if not has_unread_notifications %}visually-hidden{% endif %}"
                                   id="notification-badge"
                                   style="top: 5px; right: -5px; font-size: 0.65rem; padding: 0.25em 0.4em;">
                                 {{ unread_notifications_count }}
