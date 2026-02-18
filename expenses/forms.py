@@ -161,30 +161,30 @@ class ExpenseForm(forms.ModelForm):
 
     def _parse_payment_source(self):
         """
-        Parse the payment_source field to determine if it's a PaymentSource or CreditCard.
-        Returns (payment_source_obj, credit_card_obj) tuple.
+        Parse unified selector and return:
+        (selected_source_id, payment_source_obj, credit_card_obj)
         """
         payment_source_value = self.cleaned_data.get("payment_source")
         
         if not payment_source_value:
-            return None, None
+            return None, None, None
         
         if payment_source_value.startswith("source_"):
             source_id = int(payment_source_value.replace("source_", ""))
             try:
                 payment_source = PaymentSource.objects.get(id=source_id, user=self.user)
-                return payment_source, None
+                return source_id, payment_source, None
             except PaymentSource.DoesNotExist:
-                return None, None
+                return None, None, None
         elif payment_source_value.startswith("card_"):
             card_id = int(payment_source_value.replace("card_", ""))
             try:
                 credit_card = CreditCard.objects.get(id=card_id, user=self.user)
-                return None, credit_card
+                return card_id, None, credit_card
             except CreditCard.DoesNotExist:
-                return None, None
+                return None, None, None
         
-        return None, None
+        return None, None, None
 
     def clean_category(self):
         category = self.cleaned_data.get("category")
@@ -277,7 +277,7 @@ class ExpenseForm(forms.ModelForm):
         amount = cleaned_data.get("amount")
 
         # Parse payment source to get actual objects
-        payment_source_obj, credit_card_obj = self._parse_payment_source()
+        _, payment_source_obj, credit_card_obj = self._parse_payment_source()
 
         # Validate payment source based on payment method
         if payment_method == "Cash":
@@ -357,10 +357,10 @@ class ExpenseForm(forms.ModelForm):
         instance = super().save(commit=False)
         
         # Parse the payment_source value
-        payment_source_obj, credit_card_obj = self._parse_payment_source()
+        selected_source_id, _, credit_card_obj = self._parse_payment_source()
         
-        # Set the appropriate field
-        instance.payment_source = payment_source_obj
+        # Store the selected PK in payment_source for all payment methods
+        instance.payment_source = selected_source_id
         instance.credit_card = credit_card_obj
         
         if commit:

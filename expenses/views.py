@@ -18,7 +18,7 @@ from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.mail import send_mail
 from django.core.management import call_command
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Sum, Q
 from django.db.models.functions import TruncMonth, TruncDay
 from django.forms import modelformset_factory
@@ -1471,12 +1471,7 @@ class ExpenseCreateView(LoginRequiredMixin, generic.TemplateView):
                         expense.save()
 
                         # Update account balances
-                        if expense.payment_source:
-                            # Deduct from payment source (bank account, wallet, cash)
-                            expense.payment_source.deduct(expense.amount)
-                        elif expense.credit_card:
-                            # Use credit from credit card
-                            expense.credit_card.use_credit(expense.amount)
+                        expense.apply_payment_impact()
 
                         # Check if this is a shared expense
                         expense_type = request.POST.get("expense_type", "personal")
@@ -1653,25 +1648,15 @@ class ExpenseUpdateView(LoginRequiredMixin, generic.UpdateView):
         try:
             # Get the old expense to restore balances
             old_expense = self.get_object()
-            old_amount = old_expense.amount
-            old_payment_source = old_expense.payment_source
-            old_credit_card = old_expense.credit_card
-
             # Restore old balances first
-            if old_payment_source:
-                old_payment_source.add(old_amount)
-            elif old_credit_card:
-                old_credit_card.pay_bill(old_amount)
+            old_expense.revert_payment_impact()
 
             # Save the updated expense
             response = super().form_valid(form)
 
             # Deduct new balances
             new_expense = self.object
-            if new_expense.payment_source:
-                new_expense.payment_source.deduct(new_expense.amount)
-            elif new_expense.credit_card:
-                new_expense.credit_card.use_credit(new_expense.amount)
+            new_expense.apply_payment_impact()
 
             return response
         except IntegrityError:
@@ -1694,10 +1679,7 @@ class ExpenseBulkDeleteView(LoginRequiredMixin, View):
         
         # Restore balances for each expense before deleting
         for expense in expenses_to_delete:
-            if expense.payment_source:
-                expense.payment_source.add(expense.amount)
-            elif expense.credit_card:
-                expense.credit_card.pay_bill(expense.amount)
+            expense.revert_payment_impact()
         
         deleted_count = expenses_to_delete.count()
         
@@ -1717,15 +1699,22 @@ class ExpenseDeleteView(LoginRequiredMixin, generic.DeleteView):
     def get_queryset(self):
         return Expense.objects.filter(user=self.request.user)
 
+    def form_valid(self, form):
+        """
+        Browser delete requests hit POST -> form_valid(), not delete().
+        Restore account/card balance before deleting the expense.
+        """
+        with transaction.atomic():
+            self.object = self.get_object()
+            self.object.revert_payment_impact()
+            return super().form_valid(form)
+
     def delete(self, request, *args, **kwargs):
         """Override delete to restore account balances."""
         expense = self.get_object()
         
         # Restore balances before deleting
-        if expense.payment_source:
-            expense.payment_source.add(expense.amount)
-        elif expense.credit_card:
-            expense.credit_card.pay_bill(expense.amount)
+        expense.revert_payment_impact()
         
         return super().delete(request, *args, **kwargs)
 

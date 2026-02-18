@@ -153,14 +153,13 @@ class Expense(models.Model):
         max_length=50, choices=PAYMENT_OPTIONS, default="Cash"
     )
 
-    # Linked payment source (for bank accounts, wallets, cash tracking)
-    payment_source = models.ForeignKey(
-        PaymentSource,
-        on_delete=models.SET_NULL,
+    # Stores selected source primary key for all payment methods.
+    # For non-credit methods this points to PaymentSource.id, for credit-card payments
+    # this stores CreditCard.id.
+    payment_source = models.PositiveIntegerField(
         null=True,
         blank=True,
-        related_name="expenses",
-        help_text="Bank account, wallet, or cash source used for this expense",
+        help_text="Selected payment instrument PK (PaymentSource or CreditCard based on payment method).",
     )
 
     # Linked credit card (for credit card payments)
@@ -257,6 +256,38 @@ class Expense(models.Model):
             self.cashback_value = None
 
         super().save(*args, **kwargs)
+
+    def get_payment_source_object(self):
+        if self.payment_method == "Credit Card" or not self.payment_source:
+            return None
+        return PaymentSource.objects.filter(id=self.payment_source, user=self.user).first()
+
+    def get_credit_card_object(self):
+        if self.payment_method != "Credit Card":
+            return None
+        if self.payment_source:
+            card = CreditCard.objects.filter(id=self.payment_source, user=self.user).first()
+            if card:
+                return card
+        return self.credit_card
+
+    def apply_payment_impact(self):
+        source = self.get_payment_source_object()
+        if source:
+            source.deduct(self.amount)
+            return
+        card = self.get_credit_card_object()
+        if card:
+            card.use_credit(self.amount)
+
+    def revert_payment_impact(self):
+        source = self.get_payment_source_object()
+        if source:
+            source.add(self.amount)
+            return
+        card = self.get_credit_card_object()
+        if card:
+            card.pay_bill(self.amount)
 
     class Meta:
         constraints = [
