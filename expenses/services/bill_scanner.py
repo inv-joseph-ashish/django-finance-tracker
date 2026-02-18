@@ -111,15 +111,8 @@ def scan_bill_image(image_bytes, mime_type, categories):
             "warnings": ["Set GEMINI_API_KEY in your environment."],
         }
 
-    # Payment methods & categories are dynamic from database.
     payment_methods = Expense.PAYMENT_OPTIONS
     
-    print("categories", categories)
-    print("payment_methods", payment_methods)
-    # categories <QuerySet [{'name': 'Bills', 'id': 4}, {'name': 'Entertainment', 'id': 5}, {'name': 'Food', 'id': 1}, {'name': 'Others', 'id': 6}, {'name': 'Shopping', 'id': 3}, {'name': 'Travel', 'id': 2}]>
-    # payment_methods [('Cash', 'Cash'), ('Credit Card', 'Credit Card'), ('Debit Card', 'Debit Card'), ('UPI', 'UPI'), ('NetBanking', 'NetBanking')]
-
-    # add categories and payment methods to the prompt, so can get the correct category id and payment method name
     prompt = f"""
     Extract bill details from this image. 
     Return ONLY valid JSON with these keys exactly: amount, date, description, merchant_name, payment_method, category_suggestion, currency, confidence. 
