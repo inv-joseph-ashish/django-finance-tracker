@@ -505,11 +505,11 @@
         </div>
     </div>
 
-    <!-- Payment Method Distribution (Moved to Row 1) -->
+    <!-- Payment Method Distribution (by method, split by sources) -->
     <div class="col-md-4">
         <div class="card shadow-lg border-0 h-100 hover-lift fade-in" style="animation-delay: 0.5s">
             <div class="card-header bg-transparent border-bottom fw-bold">
-                Payment Method Distribution
+                Expenses by Payment Method
             </div>
             <div class="card-body">
                 <div style="height: 180px; width: 100%;">
@@ -688,6 +688,26 @@
         </div>
     </div>
 </div>
+
+<!-- Charts Row 4: Cashback by Payment Source -->
+ <div class="row g-4 mb-4">
+    <!-- Cashback by Payment Source -->
+    <div class="col-md-12">
+        <div class="card shadow-lg border-0 h-100 hover-lift fade-in" style="animation-delay: 0.6s">
+            <div class="card-header bg-transparent border-bottom fw-bold">
+                Cashback by Payment Source
+            </div>
+            <div class="card-body">
+                <div style="height: 180px; width: 100%;">
+                    <canvas id="cashbackChart"></canvas>
+                </div>
+                {% if not cashback_source_data %}
+                <div class="text-center text-muted mt-5">No cashback data</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+ </div>
 {% include 'partials/savings_modal.html' %}
 
 {% endif %}
@@ -703,6 +723,10 @@
 {{ selected_years|json_script:"selected-years-data" }}
 {{ payment_labels|json_script:"payment-labels" }}
 {{ payment_data|json_script:"payment-data" }}
+{{ payment_method_labels|json_script:"payment-method-labels" }}
+{{ payment_stacked_datasets|json_script:"payment-stacked-datasets" }}
+{{ cashback_source_labels|json_script:"cashback-source-labels" }}
+{{ cashback_source_data|json_script:"cashback-source-data" }}
 
 <script>
     function showLoader() {
@@ -755,6 +779,10 @@
         const sYears = safeParse('selected-years-data');
         const paymentLabels = safeParse('payment-labels');
         const paymentData = safeParse('payment-data');
+        const paymentMethodLabels = safeParse('payment-method-labels');
+        const paymentStackedDatasets = safeParse('payment-stacked-datasets');
+        const cashbackSourceLabels = safeParse('cashback-source-labels');
+        const cashbackSourceData = safeParse('cashback-source-data');
 
         // --- Theme handling ---
         const getThemeColor = () => {
@@ -1050,6 +1078,7 @@
             mutations.forEach(function(mutation) {
                 if (mutation.type === 'attributes' && mutation.attributeName === 'data-bs-theme') {
                     const newColors = getThemeColor();
+                    currentColors = newColors;
                     Chart.defaults.color = newColors.text;
                     
                     // Update Budget Chart remaining color
@@ -1066,6 +1095,9 @@
                             chart.update();
                         }
                     });
+                    // Redraw payment and cashback so bar value labels use new theme
+                    initPaymentChart();
+                    initCashbackChart();
                 }
             });
         });
@@ -1075,117 +1107,210 @@
             attributeFilter: ['data-bs-theme']
         });
 
-        // --- 5. Payment Method Chart ---
+        // --- 5. Payment Method Chart (stacked by sources when available) ---
+        const paymentGradientList = [
+            ['#00c6ff', '#0072ff'], ['#43e97b', '#38f9d7'], ['#8E2DE2', '#4A00E0'],
+            ['#4facfe', '#00f2fe'], ['#30cfd0', '#330867'], ['#fa709a', '#fee140'], ['#667eea', '#764ba2']
+        ];
         const initPaymentChart = () => {
-            
-            if (paymentLabels && paymentLabels.length > 0) {
-                const canvas = document.getElementById('paymentChart');
-                if (canvas) {
-                     const ctxPayment = canvas.getContext('2d');
-                     
-                     // Match Category Chart Gradients
-                     const paymentGradients = [
-                         createGradient(ctxPayment, '#00c6ff', '#0072ff'), // Blue
-                         createGradient(ctxPayment, '#43e97b', '#38f9d7'), // Teal
-                         createGradient(ctxPayment, '#8E2DE2', '#4A00E0'), // Purple
-                         createGradient(ctxPayment, '#4facfe', '#00f2fe'), // Cyan
-                         createGradient(ctxPayment, '#30cfd0', '#330867'), // Sea-Blue
-                         createGradient(ctxPayment, '#fa709a', '#fee140'), // Yellow-Red (Extra)
-                         createGradient(ctxPayment, '#667eea', '#764ba2')  // Deep Purple (Extra)
-                     ];
-     
-                     try {
-                         if (charts.payment) charts.payment.destroy();
-     
-                         charts.payment = new Chart(ctxPayment, {
-                             type: 'bar',
-                             data: {
-                                 labels: paymentLabels,
-                                 datasets: [{
-                                     label: 'Amount',
-                                     data: paymentData,
-                                     backgroundColor: paymentGradients,
-                                     borderRadius: 4,
-                                     barPercentage: 0.6,
-                                 }]
-                             },
-                             options: {
-                                 indexAxis: 'y', // Horizontal Bar
-                                 responsive: true,
-                                 maintainAspectRatio: false,
-                                 scales: {
-                                     x: {
-                                         grid: { display: false, drawBorder: false },
-                                         ticks: { display: false } // Hide X axis labels for cleaner look
-                                     },
-                                     y: {
-                                         grid: { display: false, drawBorder: false },
-                                         ticks: {font: { weight: 'bold' } }
-                                     }
-                                 },
-                                 plugins: { 
-                                     legend: { display: false }, // Legend redundant for bar chart with labels on Y axis
-                                     tooltip: {
-                                         callbacks: {
-                                             label: function(context) {
-                                                 let label = context.dataset.label || '';
-                                                 if (label) {
-                                                     label += ': ';
-                                                 }
-                                                 if (context.parsed.x !== null) {
-                                                     label += '{{ currency_symbol }}' + context.parsed.x.toLocaleString();
-                                                 }
-                                                 return label;
-                                             }
-                                         }
-                                     },
-                                     datalabels: { // Requires plugin, but we can do custom drawing if needed. 
-                                        // For now let's just use tooltips and clean bars.
-                                     }
-                                 },
-                                 onClick: (e, elements, chart) => {
-                                     if (elements.length > 0) {
-                                         const index = elements[0].index;
-                                         const label = chart.data.labels[index];
-                                         window.location.href = "{% url 'expense-list' %}?payment_method=" + encodeURIComponent(label);
-                                     }
-                                 },
-                                 onHover: (event, chartElement) => {
-                                     event.native.target.style.cursor = chartElement.length ? 'pointer' : 'default';
-                                 }
-                             },
-                             plugins: [{
-                                 id: 'barValues',
-                                 afterDatasetsDraw(chart) {
-                                     const { ctx } = chart;
-                                     ctx.save();
-                                     const meta = chart.getDatasetMeta(0);
-                                     meta.data.forEach((bar, index) => {
-                                         const value = paymentData[index];
-                                         const text = '{{ currency_symbol }}' + value.toLocaleString();
-                                         ctx.font = 'bold 11px sans-serif';
-                                         ctx.fillStyle = '#6c757d'; // Muted text color
-                                         ctx.textAlign = 'left';
-                                         ctx.textBaseline = 'middle';
-                                         // Draw text to the right of the bar
-                                         ctx.fillText(text, bar.x + 5, bar.y);
-                                     });
-                                     ctx.restore();
-                                 }
-                             }]
-                         });
-                     } catch (err) {
-                         console.error('Payment Chart Init Failed', err);
-                     }
+            const canvas = document.getElementById('paymentChart');
+            if (!canvas) return;
+            const ctxPayment = canvas.getContext('2d');
+            const useStacked = paymentMethodLabels && paymentMethodLabels.length > 0 && paymentStackedDatasets && paymentStackedDatasets.length > 0;
+            const hasData = useStacked || (paymentLabels && paymentLabels.length > 0);
+            if (!hasData) return;
+            try {
+                if (charts.payment) charts.payment.destroy();
+                if (useStacked) {
+                    const stackedDatasets = paymentStackedDatasets.map((ds, i) => {
+                        const [c1, c2] = paymentGradientList[i % paymentGradientList.length];
+                        return {
+                            label: ds.label,
+                            data: ds.data,
+                            backgroundColor: createGradient(ctxPayment, c1, c2),
+                            borderRadius: 4,
+                            barPercentage: 0.8,
+                            categoryPercentage: 0.9
+                        };
+                    });
+                    charts.payment = new Chart(ctxPayment, {
+                        type: 'bar',
+                        data: { labels: paymentMethodLabels, datasets: stackedDatasets },
+                        options: {
+                            indexAxis: 'y',
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                x: { stacked: true, grid: { display: false }, ticks: { display: false } },
+                                y: { stacked: true, grid: { display: false }, ticks: { font: { weight: 'bold' } } }
+                            },
+                            plugins: {
+                                legend: { display: true, position: 'bottom' },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(ctx) {
+                                            const v = ctx.parsed.x;
+                                            return (ctx.dataset.label || '') + ': ' + (v != null ? '{{ currency_symbol }}' + v.toLocaleString() : '');
+                                        }
+                                    }
+                                }
+                            },
+                            onClick: (e, elements, chart) => {
+                                if (elements.length > 0) {
+                                    const idx = elements[0].index;
+                                    const method = chart.data.labels[idx];
+                                    window.location.href = "{% url 'expense-list' %}?payment_method=" + encodeURIComponent(method);
+                                }
+                            },
+                            onHover: (event, chartElement) => {
+                                event.native.target.style.cursor = chartElement.length ? 'pointer' : 'default';
+                            }
+                        }
+                    });
                 } else {
-                    // console.error('Payment Chart Helper: Canvas not found'); // Removed as per instruction
+                    const paymentGradients = paymentGradientList.map(([c1, c2]) => createGradient(ctxPayment, c1, c2));
+                    charts.payment = new Chart(ctxPayment, {
+                        type: 'bar',
+                        data: {
+                            labels: paymentLabels,
+                            datasets: [{
+                                label: 'Amount',
+                                data: paymentData,
+                                backgroundColor: paymentGradients,
+                                borderRadius: 4,
+                                barPercentage: 0.6,
+                            }]
+                        },
+                        options: {
+                            indexAxis: 'y',
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                x: { grid: { display: false }, ticks: { display: false } },
+                                y: { grid: { display: false }, ticks: { font: { weight: 'bold' } } }
+                            },
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(ctx) {
+                                            const v = ctx.parsed.x;
+                                            return (ctx.dataset.label || '') + (v != null ? ': {{ currency_symbol }}' + v.toLocaleString() : '');
+                                        }
+                                    }
+                                }
+                            },
+                            onClick: (e, elements, chart) => {
+                                if (elements.length > 0) {
+                                    const label = chart.data.labels[elements[0].index];
+                                    const method = label.split(' - ')[0];
+                                    if (method) window.location.href = "{% url 'expense-list' %}?payment_method=" + encodeURIComponent(method);
+                                }
+                            },
+                            onHover: (event, chartElement) => {
+                                event.native.target.style.cursor = chartElement.length ? 'pointer' : 'default';
+                            }
+                        },
+                        plugins: [{
+                            id: 'barValues',
+                            afterDatasetsDraw(chart) {
+                                const { ctx } = chart;
+                                ctx.save();
+                                const meta = chart.getDatasetMeta(0);
+                                meta.data.forEach((bar, index) => {
+                                    const value = paymentData[index];
+                                    const text = '{{ currency_symbol }}' + value.toLocaleString();
+                                    ctx.font = 'bold 11px sans-serif';
+                                    ctx.fillStyle = currentColors.text;
+                                    ctx.textAlign = 'left';
+                                    ctx.textBaseline = 'middle';
+                                    ctx.fillText(text, bar.x + 5, bar.y);
+                                });
+                                ctx.restore();
+                            }
+                        }]
+                    });
                 }
+            } catch (err) {
+                console.error('Payment Chart Init Failed', err);
+            }
+        };
+
+        // --- 6. Cashback by Payment Source Chart ---
+        const initCashbackChart = () => {
+            if (!cashbackSourceLabels || !cashbackSourceData || cashbackSourceLabels.length === 0) return;
+            const canvas = document.getElementById('cashbackChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const gradients = [
+                createGradient(ctx, '#11998e', '#38ef7d'),
+                createGradient(ctx, '#4776E6', '#8E54E9'),
+                createGradient(ctx, '#f093fb', '#f5576c'),
+                createGradient(ctx, '#4facfe', '#00f2fe'),
+                createGradient(ctx, '#43e97b', '#38f9d7'),
+            ];
+            try {
+                if (charts.cashback) charts.cashback.destroy();
+                charts.cashback = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: cashbackSourceLabels,
+                        datasets: [{
+                            label: 'Cashback',
+                            data: cashbackSourceData,
+                            backgroundColor: cashbackSourceLabels.map((_, i) => gradients[i % gradients.length]),
+                            borderRadius: 4,
+                            barPercentage: 0.6,
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { grid: { display: false }, ticks: { display: false } },
+                            y: { grid: { display: false }, ticks: { font: { weight: 'bold' } } }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(ctx) {
+                                        const v = ctx.parsed.x;
+                                        return v != null ? '{{ currency_symbol }}' + v.toLocaleString() : '';
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    plugins: [{
+                        id: 'cashbackBarValues',
+                        afterDatasetsDraw(chart) {
+                            const { ctx: c } = chart;
+                            c.save();
+                            const meta = chart.getDatasetMeta(0);
+                            meta.data.forEach((bar, index) => {
+                                const value = cashbackSourceData[index];
+                                const text = '{{ currency_symbol }}' + value.toLocaleString();
+                                c.font = 'bold 11px sans-serif';
+                                c.fillStyle = currentColors.text;
+                                c.textAlign = 'left';
+                                c.textBaseline = 'middle';
+                                c.fillText(text, bar.x + 5, bar.y);
+                            });
+                            c.restore();
+                        }
+                    }]
+                });
+            } catch (err) {
+                console.error('Cashback Chart Init Failed', err);
             }
         };
 
         // Try init immediately if ready, AND on window load to be safe
         initPaymentChart();
-        window.addEventListener('load', initPaymentChart);
+        initCashbackChart();
+        window.addEventListener('load', () => { initPaymentChart(); initCashbackChart(); });
     });
 </script>
 

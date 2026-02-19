@@ -42,9 +42,11 @@ from finance_tracker.ai_utils import predict_category_ai
 from .forms import ExpenseForm, IncomeForm, RecurringTransactionForm, ProfileUpdateForm, CustomSignupForm, ContactForm
 from .services import scan_bill_image
 from .models import (
+    CreditCard,
     Expense,
     Category,
     Income,
+    PaymentSource,
     RecurringTransaction,
     UserProfile,
     SubscriptionPlan,
@@ -64,7 +66,7 @@ def create_category_ajax(request):
             
             # Check Limits
             current_count = Category.objects.filter(user=request.user).count()
-            limit = 5 # Free
+            limit = 20 # Free
             if request.user.profile.is_plus:
                 limit = 10
             if request.user.profile.is_pro:
@@ -372,6 +374,8 @@ def home_view(request):
     """
     Dashboard view with filters and multiple charts.
     """
+    from decimal import Decimal
+
     # Base QuerySet
     expenses = Expense.objects.filter(user=request.user).order_by('-date')
     
@@ -567,17 +571,104 @@ def home_view(request):
     ie_expense_data = [exp_map.get(p, 0.0) for p in all_periods_sorted]
     ie_savings_data = [inc_map.get(p, 0.0) - exp_map.get(p, 0.0) for p in all_periods_sorted]
 
-    # --- NEW: Payment Method Distribution ---
-    raw_payment_data = expenses.values('payment_method').annotate(total=Sum('amount')).order_by('payment_method')
-    payment_map = {}
-    for item in raw_payment_data:
-        pm_name = item['payment_method'] or 'Unknown'
-        payment_map[pm_name] = float(item['total'])
-    
-    # Sort by total desc
-    sorted_payment_items = sorted(payment_map.items(), key=lambda x: x[1], reverse=True)
+    # --- 1. Payment Method Distribution (method -> sources; use only payment_source) ---
+    # Cash when payment_method is Cash (payment_source can be null). Others use payment_source to resolve card or bank.
+    expenses_qs = expenses.values('id', 'payment_method', 'amount', 'payment_source')
+    payment_map = {}  # method -> { source_name: total }
+    for expense in expenses_qs:
+        pm_name = expense['payment_method'] or 'Unknown'
+        amount = float(expense['amount'])
+        source_id = expense.get('payment_source')
+
+        if pm_name == 'Cash':
+            # Cash: no payment_source needed; if method is Cash it's cash
+            if pm_name not in payment_map:
+                payment_map[pm_name] = {}
+            payment_map[pm_name]['Cash'] = payment_map[pm_name].get('Cash', 0) + amount
+        elif pm_name == 'Credit Card':
+            if source_id:
+                card = CreditCard.objects.filter(user=request.user, pk=source_id).first()
+                if card:
+                    if pm_name not in payment_map:
+                        payment_map[pm_name] = {}
+                    payment_map[pm_name][card.name] = payment_map[pm_name].get(card.name, 0) + amount
+                else:
+                    if pm_name not in payment_map:
+                        payment_map[pm_name] = {}
+                    payment_map[pm_name]['Unknown'] = payment_map[pm_name].get('Unknown', 0) + amount
+            else:
+                if pm_name not in payment_map:
+                    payment_map[pm_name] = {}
+                payment_map[pm_name]['Unknown'] = payment_map[pm_name].get('Unknown', 0) + amount
+        else:
+            # UPI, Debit Card, NetBanking: payment_source = PaymentSource id
+            if pm_name not in payment_map:
+                payment_map[pm_name] = {}
+            if source_id:
+                source = PaymentSource.objects.filter(user=request.user, pk=source_id).first()
+                if source:
+                    payment_map[pm_name][source.name] = payment_map[pm_name].get(source.name, 0) + amount
+                else:
+                    payment_map[pm_name]['Unknown'] = payment_map[pm_name].get('Unknown', 0) + amount
+            else:
+                payment_map[pm_name]['Unknown'] = payment_map[pm_name].get('Unknown', 0) + amount
+
+    # Stacked bar: one row per payment method, segments = sources (cards/banks)
+    method_totals = [(m, sum(sub.values())) for m, sub in payment_map.items()]
+    method_totals.sort(key=lambda x: x[1], reverse=True)
+    payment_method_labels = [m for m, _ in method_totals]
+    method_index = {m: i for i, m in enumerate(payment_method_labels)}
+    n_methods = len(payment_method_labels)
+    payment_stacked_datasets = []
+    for method, segments in payment_map.items():
+        idx = method_index[method]
+        for segment_name, amount in segments.items():
+            data = [0.0] * n_methods
+            data[idx] = amount
+            payment_stacked_datasets.append({"label": segment_name, "data": data})
+    payment_flat = []
+    for method, segments in payment_map.items():
+        for seg_name, amt in segments.items():
+            payment_flat.append((f"{method} - {seg_name}", amt))
+    sorted_payment_items = sorted(payment_flat, key=lambda x: x[1], reverse=True)
     payment_labels = [item[0] for item in sorted_payment_items]
     payment_data = [item[1] for item in sorted_payment_items]
+
+    # --- 2. Cashback by Payment Source (which card/bank has more cashback) ---
+    cashback_qs = expenses.filter(has_cashback=True).values(
+        'payment_method', 'payment_source', 'amount', 'cashback_type', 'cashback_value'
+    )
+    cashback_by_source = {}  # source_name -> total_cashback
+    for row in cashback_qs:
+        if not row.get('cashback_value'):
+            continue
+        amt = Decimal(str(row['amount']))
+        cb_type = row.get('cashback_type')
+        cb_val = Decimal(str(row['cashback_value']))
+        if cb_type == 'PERCENTAGE':
+            cashback_amt = float((amt * cb_val) / 100)
+        elif cb_type == 'FIXED':
+            cashback_amt = float(cb_val)
+        else:
+            continue
+        pm_name = row.get('payment_method') or 'Unknown'
+        source_id = row.get('payment_source')
+        if pm_name == 'Credit Card' and source_id:
+            card = CreditCard.objects.filter(user=request.user, pk=source_id).first()
+            name = card.name if card else 'Unknown'
+        elif source_id:
+            source = PaymentSource.objects.filter(user=request.user, pk=source_id).first()
+            name = source.name if source else 'Unknown'
+        else:
+            name = 'Cash/Other'
+        cashback_by_source[name] = cashback_by_source.get(name, 0) + cashback_amt
+    cashback_source_labels = list(cashback_by_source.keys())
+    cashback_source_data = [cashback_by_source[k] for k in cashback_source_labels]
+    # Sort by cashback amount desc
+    if cashback_source_labels:
+        combined = sorted(zip(cashback_source_labels, cashback_source_data), key=lambda x: x[1], reverse=True)
+        cashback_source_labels = [x[0] for x in combined]
+        cashback_source_data = [x[1] for x in combined]
 
 
     # 4. Summary Stats
@@ -957,6 +1048,10 @@ def home_view(request):
         'ie_savings_data': ie_savings_data,
         'payment_labels': payment_labels,
         'payment_data': payment_data,
+        'payment_method_labels': payment_method_labels,
+        'payment_stacked_datasets': payment_stacked_datasets,
+        'cashback_source_labels': cashback_source_labels,
+        'cashback_source_data': cashback_source_data,
         'years': years,
         'all_categories': all_categories,
         'selected_years': selected_years,
