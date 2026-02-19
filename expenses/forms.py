@@ -106,6 +106,18 @@ class ExpenseForm(forms.ModelForm):
             # Populate payment source options dynamically
             self.fields["payment_source"].choices = self._get_payment_source_choices(user)
 
+            # On edit, set initial payment_source to "source_<id>" or "card_<id>" for JS dropdown + badge
+            if self.instance and getattr(self.instance, "pk", None):
+                pm = getattr(self.instance, "payment_method", None)
+                ps = getattr(self.instance, "payment_source", None)
+                cc = getattr(self.instance, "credit_card_id", None)
+                if cc is None and getattr(self.instance, "credit_card", None):
+                    cc = self.instance.credit_card_id
+                if pm == "Credit Card" and (cc or ps):
+                    self.initial["payment_source"] = f"card_{cc or ps}"
+                elif ps:
+                    self.initial["payment_source"] = f"source_{ps}"
+
             # Only set default participant if this is a new expense (not editing)
             # Check if participants_json already has initial data from the view
             if not self.initial.get("participants_json"):

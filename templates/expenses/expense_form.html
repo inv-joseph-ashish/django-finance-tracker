@@ -196,7 +196,7 @@
                         {% endfor %}
 
                         <!-- Account Selection Section -->
-                        <div id="payment-account-section" class="card bg-light border-0 mb-3">
+                        <div id="payment-account-section" class="card bg-light border-0 mb-3" data-initial-payment-source="{{ form.payment_source.value|default:'' }}">
                             <div class="card-body">
                                 <h6 class="card-subtitle mb-3 text-primary">
                                     <i class="bi bi-wallet2 me-2"></i>Payment Account <span id="payment-account-required-badge" class="badge bg-danger">Required</span>
@@ -1375,6 +1375,26 @@
                     // Enable the select and make it required
                     paymentSourceSelect.disabled = false;
                     paymentSourceSelect.required = true;
+                    
+                    // On edit: restore initial payment source selection and show balance badge
+                    const initialPaymentSource = paymentAccountSection && paymentAccountSection.getAttribute('data-initial-payment-source');
+                    if (initialPaymentSource) {
+                        paymentSourceSelect.value = initialPaymentSource;
+                        if (paymentSourceSelect.value === initialPaymentSource) {
+                            const selectedOption = paymentSourceSelect.options[paymentSourceSelect.selectedIndex];
+                            if (selectedOption && selectedOption.dataset.balanceDisplay) {
+                                paymentSourceBalanceBadge.textContent = 'Balance: ' + selectedOption.dataset.balanceDisplay;
+                                paymentSourceBalanceBadge.classList.remove('d-none');
+                                if (selectedOption.dataset.sufficientFunds === 'false') {
+                                    paymentSourceBalanceBadge.classList.remove('bg-info');
+                                    paymentSourceBalanceBadge.classList.add('bg-danger');
+                                } else {
+                                    paymentSourceBalanceBadge.classList.remove('bg-danger');
+                                    paymentSourceBalanceBadge.classList.add('bg-info');
+                                }
+                            }
+                        }
+                    }
                     
                     // Update balance badge when selection changes
                     paymentSourceSelect.addEventListener('change', function() {
