@@ -293,6 +293,16 @@
                             </div>
                         </div>
 
+                        <!-- Paid to Credit Card Section (only applicable for credit card expenses)-->
+                        <div class="mb-3" id="paid-to-credit-card-section" {% if form.payment_method.value != 'Credit Card' %}style="display: none;"{% endif %}>
+                            <div class="form-check form-switch">
+                                {{ form.paid_to_credit_card }}
+                                <label class="form-check-label" for="{{ form.paid_to_credit_card.id_for_label }}">
+                                    <i class="bi bi-credit-card me-1"></i>Paid to Credit Card
+                                </label>
+                            </div>
+                        </div>
+
                         <!-- Cashback Section -->
                         <div id="cashback-section" class="{% if not form.has_cashback.value %}d-none{% endif %}">
                             <div class="card bg-light border-0 mb-3">
@@ -954,6 +964,19 @@
                     // The above generic input handler covers typical django form fields.
                 });
             }
+        }
+    
+        // --- Paid to Credit Card Section Logic ---
+        const paidToCreditCardSection = document.getElementById('paid-to-credit-card-section');
+        const paymentMethodSelect = document.querySelector('select[name="payment_method"]');
+        if (paymentMethodSelect) {
+            paymentMethodSelect.addEventListener('change', function() {
+                if (this.value === 'Credit Card') {
+                    paidToCreditCardSection.style.display = 'block';
+                } else {
+                    paidToCreditCardSection.style.display = 'none';
+                }
+            });
         }
     });
 </script>

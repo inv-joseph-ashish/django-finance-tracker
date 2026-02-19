@@ -185,6 +185,12 @@ class Expense(models.Model):
         max_digits=10, decimal_places=2, blank=True, null=True
     )
 
+    # expense already paid to credit card (only applicable for credit card expenses)
+    paid_to_credit_card = models.BooleanField(
+        default=False,
+        help_text="True if the expense has already been paid to the credit card."
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -277,7 +283,7 @@ class Expense(models.Model):
             source.deduct(self.amount)
             return
         card = self.get_credit_card_object()
-        if card:
+        if card and not self.paid_to_credit_card:
             card.use_credit(self.amount)
 
     def revert_payment_impact(self):
@@ -286,7 +292,7 @@ class Expense(models.Model):
             source.add(self.amount)
             return
         card = self.get_credit_card_object()
-        if card:
+        if card and not self.paid_to_credit_card:
             card.pay_bill(self.amount)
 
     class Meta:

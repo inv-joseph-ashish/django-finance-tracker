@@ -61,6 +61,7 @@ class ExpenseForm(forms.ModelForm):
             "has_cashback",
             "cashback_type",
             "cashback_value",
+            "paid_to_credit_card",
         ]
         widgets = {
             "date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
@@ -75,6 +76,9 @@ class ExpenseForm(forms.ModelForm):
             "cashback_type": forms.Select(attrs={"class": "form-select"}),
             "cashback_value": forms.NumberInput(
                 attrs={"class": "form-control", "step": "0.01", "min": "0"}
+            ),
+            "paid_to_credit_card": forms.CheckboxInput(
+                attrs={"class": "form-check-input", "role": "switch"}
             ),
         }
 
