@@ -1,0 +1,151 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="fade-in">
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb mb-0">
+                <li class="breadcrumb-item"><a href="{% url 'cash-credit-list' %}">Cash Credit</a></li>
+                <li class="breadcrumb-item active">{{ credit.friend.name }} – {{ credit.get_credit_type_display }}</li>
+            </ol>
+        </nav>
+        <div class="d-flex gap-2 mt-2 mt-md-0">
+            <a href="{% url 'cash-credit-edit' credit.pk %}" class="btn btn-outline-secondary btn-sm">Edit</a>
+            <a href="{% url 'cash-credit-delete' credit.pk %}" class="btn btn-outline-danger btn-sm">Delete</a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-transparent fw-bold">Summary</div>
+                <div class="card-body">
+                    <dl class="row mb-0">
+                        <dt class="col-sm-4">Friend</dt>
+                        <dd class="col-sm-8 fw-bold">{{ credit.friend.name }}</dd>
+                        <dt class="col-sm-4">Type</dt>
+                        <dd class="col-sm-8">
+                            {% if credit.credit_type == 'lent' %}
+                                <span class="badge bg-info-subtle text-info">I lent (gave credit)</span>
+                            {% else %}
+                                <span class="badge bg-warning-subtle text-warning">I borrowed (received)</span>
+                            {% endif %}
+                        </dd>
+                        <dt class="col-sm-4">Total amount</dt>
+                        <dd class="col-sm-8">{{ currency_symbol }}{{ credit.total_amount|floatformat:2 }}</dd>
+                        <dt class="col-sm-4">Amount paid back</dt>
+                        <dd class="col-sm-8">{{ currency_symbol }}{{ credit.amount_repaid|floatformat:2 }}</dd>
+                        <dt class="col-sm-4">Remaining</dt>
+                        <dd class="col-sm-8 fw-bold text-primary">{{ currency_symbol }}{{ credit.remaining|floatformat:2 }}</dd>
+                        <dt class="col-sm-4">Status</dt>
+                        <dd class="col-sm-8">
+                            {% if credit.status == 'completed' %}
+                                <span class="badge bg-success">Completed</span>
+                            {% elif credit.status == 'partial' %}
+                                <span class="badge bg-primary">Partial</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Pending</span>
+                            {% endif %}
+                        </dd>
+                        <dt class="col-sm-4">Date</dt>
+                        <dd class="col-sm-8">{{ credit.date|date:"M d, Y" }}</dd>
+                        {% if credit.received_into_account %}
+                        <dt class="col-sm-4">Account (received into)</dt>
+                        <dd class="col-sm-8">{{ credit.received_into_account.name }}</dd>
+                        {% endif %}
+                        {% if credit.given_from_account %}
+                        <dt class="col-sm-4">Given from</dt>
+                        <dd class="col-sm-8">{{ credit.given_from_account.name }}</dd>
+                        {% endif %}
+                        {% if credit.notes %}
+                        <dt class="col-sm-4">Notes</dt>
+                        <dd class="col-sm-8">{{ credit.notes }}</dd>
+                        {% endif %}
+                    </dl>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            {% if credit.status != 'completed' %}
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-transparent fw-bold">Add repayment</div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small">Amount (max {{ credit.remaining }})</label>
+                                {{ repayment_form.amount }}
+                                {% if repayment_form.amount.errors %}<div class="text-danger small">{{ repayment_form.amount.errors|first }}</div>{% endif %}
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small">Date</label>
+                                {{ repayment_form.date }}
+                            </div>
+                            <div class="col-12" id="received-into-repayment-group" style="display: {% if credit.credit_type == 'lent' %}block{% else %}none{% endif %};">
+                                <label class="form-label small">Received into account <span class="text-danger">*</span></label>
+                                {{ repayment_form.received_into_account }}
+                                <small class="text-muted">Account where the repayment was received.</small>
+                                {% if repayment_form.received_into_account.errors %}<div class="text-danger small">{{ repayment_form.received_into_account.errors|first }}</div>{% endif %}
+                            </div>
+                            <div class="col-12" id="given-from-repayment-group" style="display: {% if credit.credit_type == 'borrowed' %}block{% else %}none{% endif %};">
+                                <label class="form-label small">Given from account <span class="text-danger">*</span></label>
+                                {{ repayment_form.paid_from_account }}
+                                <small class="text-muted">Account the repayment was paid from (balance will be deducted).</small>
+                                {% if repayment_form.paid_from_account.errors %}<div class="text-danger small">{{ repayment_form.paid_from_account.errors|first }}</div>{% endif %}
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label small">Notes</label>
+                                {{ repayment_form.notes }}
+                            </div>
+                            <div class="col-12">
+                                <button type="submit" class="btn btn-primary btn-sm">Record repayment</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-transparent fw-bold">Repayment history</div>
+                <div class="card-body p-0">
+                    {% if credit.repayments.all %}
+                        <ul class="list-group list-group-flush">
+                            {% for r in credit.repayments.all %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="fw-bold">{{ currency_symbol }}{{ r.amount|floatformat:2 }}</span>
+                                    <span class="text-muted small ms-2">{{ r.date|date:"M d, Y" }}</span>
+                                    {% if r.received_into_account %}<span class="text-muted small d-block">Received into: {{ r.received_into_account.name }}</span>{% endif %}
+                                    {% if r.paid_from_account %}<span class="text-muted small d-block">Paid from: {{ r.paid_from_account.name }}</span>{% endif %}
+                                    {% if r.notes %}<span class="text-muted small d-block">{{ r.notes }}</span>{% endif %}
+                                </div>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="text-muted small p-3 mb-0">No repayments yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Repayment form: mandatory account is based on credit type (set by server)
+        var receivedGroup = document.getElementById('received-into-repayment-group');
+        var givenGroup = document.getElementById('given-from-repayment-group');
+        var receivedSelect = document.querySelector('form [name="received_into_account"]');
+        var paidFromSelect = document.querySelector('form [name="paid_from_account"]');
+        if (receivedGroup && receivedGroup.style.display !== 'none') {
+            if (receivedSelect) receivedSelect.required = true;
+        }
+        if (givenGroup && givenGroup.style.display !== 'none') {
+            if (paidFromSelect) paidFromSelect.required = true;
+        }
+    });
+</script>
+{% endblock %}

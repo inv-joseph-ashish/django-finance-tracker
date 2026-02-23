@@ -761,3 +761,105 @@ class Notification(models.Model):
     def __str__(self):
         return f"Notification for {self.user.username}: {self.title}"
 
+
+class CashCredit(models.Model):
+    """
+    Tracks cash given as credit to a friend (lent) or cash received from a friend (borrowed).
+    - LENT: You gave money to friend; they owe you. Repayments add back to your account.
+    - BORROWED: You received money from friend into your bank; you owe them. Repayments are recorded.
+    """
+
+    TYPE_CHOICES = [
+        ("lent", "I lent (gave credit to friend)"),
+        ("borrowed", "I borrowed (received from friend)"),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="cash_credits")
+    friend = models.ForeignKey(Friend, on_delete=models.CASCADE, related_name="cash_credits")
+    credit_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    total_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))]
+    )
+    # For BORROWED: bank account where the received amount was credited (balance updated on create)
+    received_into_account = models.ForeignKey(
+        PaymentSource,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cash_credit_received",
+        help_text="Account where money was received (borrowed) or where repayments are received (lent).",
+    )
+    # For LENT: optional account/cash the loan was given from (deducted on create if set)
+    given_from_account = models.ForeignKey(
+        PaymentSource,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cash_credit_given_from",
+        help_text="Account/cash the loan was given from (lent only).",
+    )
+    date = models.DateField()
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-date", "-created_at"]
+
+    @property
+    def amount_repaid(self):
+        from django.db.models import Sum
+        total = self.repayments.aggregate(s=Sum("amount"))["s"] or Decimal("0")
+        return total
+
+    @property
+    def remaining(self):
+        return self.total_amount - self.amount_repaid
+
+    @property
+    def status(self):
+        if self.amount_repaid >= self.total_amount:
+            return "completed"
+        if self.amount_repaid > 0:
+            return "partial"
+        return "pending"
+
+    def __str__(self):
+        return f"{self.get_credit_type_display()} – {self.friend.name}: {self.total_amount} (remaining {self.remaining})"
+
+
+class CashCreditRepayment(models.Model):
+    """One repayment (installment) for a cash credit."""
+
+    cash_credit = models.ForeignKey(
+        CashCredit, on_delete=models.CASCADE, related_name="repayments"
+    )
+    amount = models.DecimalField(
+        max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))]
+    )
+    date = models.DateField()
+    # For LENT: account where this repayment was received (balance updated)
+    received_into_account = models.ForeignKey(
+        PaymentSource,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cash_credit_repayments_received",
+    )
+    # For BORROWED: account the repayment was paid from (balance deducted)
+    paid_from_account = models.ForeignKey(
+        PaymentSource,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cash_credit_repayments_paid_from",
+    )
+    notes = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-date", "-created_at"]
+
+    def __str__(self):
+        return f"Repayment {self.amount} on {self.date}"
+

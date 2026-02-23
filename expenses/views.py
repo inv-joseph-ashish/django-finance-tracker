@@ -35,11 +35,21 @@ from django.views.generic import (
     CreateView,
     UpdateView,
     DeleteView,
+    DetailView,
     View,
 )
 
 from finance_tracker.ai_utils import predict_category_ai
-from .forms import ExpenseForm, IncomeForm, RecurringTransactionForm, ProfileUpdateForm, CustomSignupForm, ContactForm
+from .forms import (
+    ExpenseForm,
+    IncomeForm,
+    RecurringTransactionForm,
+    ProfileUpdateForm,
+    CustomSignupForm,
+    ContactForm,
+    CashCreditForm,
+    CashCreditRepaymentForm,
+)
 from .services import scan_bill_image
 from .models import (
     CreditCard,
@@ -51,6 +61,8 @@ from .models import (
     UserProfile,
     SubscriptionPlan,
     Friend,
+    CashCredit,
+    CashCreditRepayment,
 )
 from .models import Notification
 
@@ -2317,6 +2329,15 @@ class BudgetDashboardView(LoginRequiredMixin, RecurringTransactionMixin, Templat
         return context
 
 # --------------------
+# Cash Credit Views
+# Cash received as credit from someone to bank account or given to someone as credit (on repayment enter the amount repaid and )
+# --------------------
+
+
+
+
+
+# --------------------
 # Recurring Transaction Views
 # --------------------
 
@@ -2602,6 +2623,227 @@ class RecurringTransactionDeleteView(LoginRequiredMixin, DeleteView):
         messages.success(self.request, f"You just saved {currency}{yearly_saving:,.0f}/year 🎉")
         return super().form_valid(form)
 
+
+# --------------------
+# Cash Credit Views
+# --------------------
+
+
+class CashCreditListView(LoginRequiredMixin, ListView):
+    model = CashCredit
+    template_name = "expenses/cash_credit_list.html"
+    context_object_name = "cash_credits"
+    paginate_by = 20
+
+    def get_queryset(self):
+        return CashCredit.objects.filter(user=self.request.user).select_related(
+            "friend", "received_into_account", "given_from_account"
+        ).order_by("-date", "-created_at")
+
+
+class CashCreditCreateView(LoginRequiredMixin, CreateView):
+    model = CashCredit
+    form_class = CashCreditForm
+    template_name = "expenses/cash_credit_form.html"
+    success_url = reverse_lazy("cash-credit-list")
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = self.request.user
+        return kwargs
+
+    def form_valid(self, form):
+        form.instance.user = self.request.user
+        acc_given = form.cleaned_data.get("given_from_account")
+        credit_type = form.cleaned_data.get("credit_type")
+        total_amount = form.cleaned_data.get("total_amount")
+        if credit_type == "lent" and acc_given and acc_given.balance < total_amount:
+            messages.error(
+                self.request,
+                f"Not enough balance in {acc_given.name}. Current: {acc_given.balance}.",
+            )
+            return self.render_to_response(self.get_context_data(form=form))
+        obj = form.save()
+        self.object = obj  # required for get_success_url() which uses self.object
+        acc_received = obj.received_into_account
+        if obj.credit_type == "borrowed" and acc_received:
+            acc_received.add(obj.total_amount)
+        elif obj.credit_type == "lent" and acc_given:
+            acc_given.deduct(obj.total_amount)
+        messages.success(self.request, "Cash credit recorded successfully.")
+        return redirect(self.get_success_url())
+
+
+class CashCreditDetailView(LoginRequiredMixin, DetailView):
+    model = CashCredit
+    template_name = "expenses/cash_credit_detail.html"
+    context_object_name = "credit"
+
+    def get_queryset(self):
+        return CashCredit.objects.filter(user=self.request.user).prefetch_related("repayments")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        credit = context.get("credit")
+        context["repayment_form"] = CashCreditRepaymentForm(
+            user=self.request.user, credit=credit
+        )
+        return context
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        form = CashCreditRepaymentForm(
+            request.POST, user=request.user, credit=self.object
+        )
+        if form.is_valid():
+            amount = form.cleaned_data["amount"]
+            remaining_before = self.object.remaining
+            if amount > remaining_before:
+                messages.error(
+                    request,
+                    f"Repayment amount cannot exceed remaining amount ({remaining_before}).",
+                )
+                return redirect("cash-credit-detail", pk=self.object.pk)
+            repayment = form.save(commit=False)
+            repayment.cash_credit = self.object
+            repayment.save()
+            # LENT: friend paid me back -> add to received_into_account (mandatory)
+            if self.object.credit_type == "lent" and repayment.received_into_account:
+                repayment.received_into_account.add(repayment.amount)
+            # BORROWED: I paid friend back -> deduct from paid_from_account (mandatory)
+            elif self.object.credit_type == "borrowed" and repayment.paid_from_account:
+                repayment.paid_from_account.deduct(repayment.amount)
+            messages.success(request, f"Repayment of {amount} recorded.")
+            return redirect("cash-credit-detail", pk=self.object.pk)
+        context = self.get_context_data()
+        context["repayment_form"] = form
+        return self.render_to_response(context)
+
+
+class CashCreditUpdateView(LoginRequiredMixin, UpdateView):
+    model = CashCredit
+    form_class = CashCreditForm
+    template_name = "expenses/cash_credit_form.html"
+    success_url = reverse_lazy("cash-credit-list")
+    context_object_name = "credit"
+
+    def get_queryset(self):
+        return CashCredit.objects.filter(user=self.request.user)
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = self.request.user
+        return kwargs
+
+    def form_valid(self, form):
+        obj = self.get_object()
+        old_total = obj.total_amount
+        old_received = obj.received_into_account
+        old_given = obj.given_from_account
+        new_total = form.cleaned_data["total_amount"]
+        new_received = form.cleaned_data.get("received_into_account")
+        new_given = form.cleaned_data.get("given_from_account")
+        amount_repaid = obj.amount_repaid
+        if new_total < amount_repaid:
+            form.add_error(
+                "total_amount",
+                f"Total cannot be less than amount already repaid ({amount_repaid}).",
+            )
+            return self.form_invalid(form)
+        # If account(s) changed, reverse full old and apply full new
+        if obj.credit_type == "borrowed":
+            if old_received != new_received:
+                if old_received:
+                    old_received.deduct(old_total)
+                if new_received:
+                    new_received.add(new_total)
+            elif old_received and old_total != new_total:
+                diff = new_total - old_total
+                if diff > 0:
+                    old_received.add(diff)
+                else:
+                    old_received.deduct(-diff)
+        elif obj.credit_type == "lent":
+            if old_given != new_given:
+                if old_given:
+                    old_given.add(old_total)
+                if new_given:
+                    if new_given.balance < new_total:
+                        form.add_error(
+                            "given_from_account",
+                            f"Not enough balance in {new_given.name}.",
+                        )
+                        return self.form_invalid(form)
+                    new_given.deduct(new_total)
+            elif old_given and old_total != new_total:
+                diff = new_total - old_total
+                if diff > 0:
+                    if old_given.balance < diff:
+                        form.add_error(
+                            "total_amount",
+                            f"Not enough balance in {old_given.name} to increase by {diff}.",
+                        )
+                        return self.form_invalid(form)
+                    old_given.deduct(diff)
+                else:
+                    old_given.add(-diff)
+        messages.success(self.request, "Cash credit updated.")
+        return super().form_valid(form)
+
+
+class CashCreditDeleteView(LoginRequiredMixin, DeleteView):
+    model = CashCredit
+    template_name = "expenses/cash_credit_confirm_delete.html"
+    success_url = reverse_lazy("cash-credit-list")
+    context_object_name = "credit"
+
+    def get_queryset(self):
+        return CashCredit.objects.filter(user=self.request.user)
+
+    def delete(self, request, *args, **kwargs):
+        obj = self.get_object()
+        # Reverse balance: BORROWED had added to account -> deduct; LENT had deducted -> add back
+        acc_received = obj.received_into_account
+        acc_given = obj.given_from_account
+        repaid = obj.amount_repaid
+        if obj.credit_type == "borrowed" and acc_received:
+            acc_received.deduct(obj.total_amount)
+        elif obj.credit_type == "lent" and acc_given:
+            acc_given.add(obj.total_amount)
+        # Repayments: reverse balance updates
+        for r in obj.repayments.all():
+            if r.received_into_account:
+                r.received_into_account.deduct(r.amount)
+            if r.paid_from_account:
+                r.paid_from_account.add(r.amount)
+        return super().delete(request, *args, **kwargs)
+
+
+class CashCreditBulkDeleteView(LoginRequiredMixin, View):
+    def post(self, request):
+        ids = request.POST.getlist("ids")
+        if not ids:
+            messages.warning(request, "No items selected.")
+            return redirect("cash-credit-list")
+        qs = CashCredit.objects.filter(user=request.user, pk__in=ids)
+        for obj in qs:
+            acc_received = obj.received_into_account
+            acc_given = obj.given_from_account
+            if obj.credit_type == "borrowed" and acc_received:
+                acc_received.deduct(obj.total_amount)
+            elif obj.credit_type == "lent" and acc_given:
+                acc_given.add(obj.total_amount)
+            for r in obj.repayments.all():
+                if r.received_into_account:
+                    r.received_into_account.deduct(r.amount)
+                if r.paid_from_account:
+                    r.paid_from_account.add(r.amount)
+        count = qs.count()
+        qs.delete()
+        messages.success(request, f"{count} cash credit(s) deleted.")
+        return redirect("cash-credit-list")
+
+
 class AccountDeleteView(LoginRequiredMixin, DeleteView):
     model = User
     success_url = reverse_lazy('landing')
@@ -2785,32 +3027,34 @@ class BalanceSummaryView(LoginRequiredMixin, TemplateView):
         user_owes_people = []
         settled_people = []
 
+        # user id
         for friend_id, balance_data in balances.items():
-            net_balance = balance_data["net"]
-            friend = balance_data.get("friend")
+            if friend_id != user.id:
+                net_balance = balance_data["net"]
+                friend = balance_data.get("friend")
 
-            balance_info = {
-                "id": friend_id,
-                "friend": friend,
-                "name": balance_data["name"],
-                "email": friend.email if friend else None,
-                "phone": friend.phone if friend else None,
-                "lent": balance_data["lent"],
-                "borrowed": balance_data["borrowed"],
-                "net": net_balance,
-                "net_abs": abs(net_balance),
-                "transactions": transactions_by_friend.get(friend_id, []),
-            }
+                balance_info = {
+                    "id": friend_id,
+                    "friend": friend,
+                    "name": balance_data["name"],
+                    "email": friend.email if friend else None,
+                    "phone": friend.phone if friend else None,
+                    "lent": balance_data["lent"],
+                    "borrowed": balance_data["borrowed"],
+                    "net": net_balance,
+                    "net_abs": abs(net_balance),
+                    "transactions": transactions_by_friend.get(friend_id, []),
+                }
 
-            if net_balance > 0:
-                # User lent more than borrowed - friend owes user
-                people_owe_user.append(balance_info)
-            elif net_balance < 0:
-                # User borrowed more than lent - user owes friend
-                user_owes_people.append(balance_info)
-            else:
-                # Net balance is zero - settled up
-                settled_people.append(balance_info)
+                if net_balance > 0:
+                    # User lent more than borrowed - friend owes user
+                    people_owe_user.append(balance_info)
+                elif net_balance < 0:
+                    # User borrowed more than lent - user owes friend
+                    user_owes_people.append(balance_info)
+                else:
+                    # Net balance is zero - settled up
+                    settled_people.append(balance_info)
 
         # Sort by absolute net balance (highest first)
         people_owe_user.sort(key=lambda x: x["net"], reverse=True)

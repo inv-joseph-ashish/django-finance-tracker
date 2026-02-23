@@ -1,0 +1,90 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row justify-content-center fade-in">
+    <div class="col-md-8">
+        <div class="card shadow-lg border-0">
+            <div class="card-header bg-transparent py-3">
+                <h2 class="h4 mb-0 fw-bold">{% if credit %}Edit{% else %}Add{% endif %} Cash Credit</h2>
+            </div>
+            <div class="card-body">
+                <form method="post" class="needs-validation" novalidate>
+                    {% csrf_token %}
+                    {% if form.non_field_errors %}
+                        <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+                    {% endif %}
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Friend</label>
+                            {{ form.friend }}
+                            {% if form.friend.errors %}<div class="text-danger small">{{ form.friend.errors|first }}</div>{% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Type</label>
+                            {{ form.credit_type }}
+                            {% if form.credit_type.errors %}<div class="text-danger small">{{ form.credit_type.errors|first }}</div>{% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Total amount</label>
+                            {{ form.total_amount }}
+                            {% if form.total_amount.errors %}<div class="text-danger small">{{ form.total_amount.errors|first }}</div>{% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Date</label>
+                            {{ form.date }}
+                            {% if form.date.errors %}<div class="text-danger small">{{ form.date.errors|first }}</div>{% endif %}
+                        </div>
+                        <div class="col-12" id="received-into-group" style="display: none;">
+                            <label class="form-label">Received into account <span class="text-danger">*</span></label>
+                            {{ form.received_into_account }}
+                            <small class="text-muted">Account where the money was received.</small>
+                            {% if form.received_into_account.errors %}<div class="text-danger small">{{ form.received_into_account.errors|first }}</div>{% endif %}
+                        </div>
+                        <div class="col-12" id="given-from-group" style="display: none;">
+                            <label class="form-label">Given from account <span class="text-danger">*</span></label>
+                            {{ form.given_from_account }}
+                            <small class="text-muted">Account/cash the loan was given from (balance will be deducted).</small>
+                            {% if form.given_from_account.errors %}<div class="text-danger small">{{ form.given_from_account.errors|first }}</div>{% endif %}
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Notes</label>
+                            {{ form.notes }}
+                            {% if form.notes.errors %}<div class="text-danger small">{{ form.notes.errors|first }}</div>{% endif %}
+                        </div>
+                    </div>
+                    <div class="mt-4 d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">Save</button>
+                        <a href="{% url 'cash-credit-list' %}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var typeSelect = document.querySelector('[name="credit_type"]');
+    var receivedGroup = document.getElementById('received-into-group');
+    var givenGroup = document.getElementById('given-from-group');
+    var receivedSelect = document.querySelector('[name="received_into_account"]');
+    var givenSelect = document.querySelector('[name="given_from_account"]');
+
+    function toggleAccountFields() {
+        var value = typeSelect ? typeSelect.value : '';
+        receivedGroup.style.display = value === 'borrowed' ? 'block' : 'none';
+        givenGroup.style.display = value === 'lent' ? 'block' : 'none';
+        if (receivedSelect) {
+            receivedSelect.required = value === 'borrowed';
+        }
+        if (givenSelect) {
+            givenSelect.required = value === 'lent';
+        }
+    }
+
+    if (typeSelect) {
+        toggleAccountFields();
+        typeSelect.addEventListener('change', toggleAccountFields);
+    }
+});
+</script>
+{% endblock %}
