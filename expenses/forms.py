@@ -7,7 +7,7 @@ from django import forms
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.models import User
 
-from .models import Expense, Category, Income, RecurringTransaction, Friend, PaymentSource, CreditCard
+from .models import Expense, Category, Income, RecurringTransaction, Friend, PaymentSource, CreditCard, CashCredit, CashCreditRepayment
 
 
 class ExpenseForm(forms.ModelForm):
@@ -61,6 +61,7 @@ class ExpenseForm(forms.ModelForm):
             "has_cashback",
             "cashback_type",
             "cashback_value",
+            "paid_to_credit_card",
         ]
         widgets = {
             "date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
@@ -75,6 +76,9 @@ class ExpenseForm(forms.ModelForm):
             "cashback_type": forms.Select(attrs={"class": "form-select"}),
             "cashback_value": forms.NumberInput(
                 attrs={"class": "form-control", "step": "0.01", "min": "0"}
+            ),
+            "paid_to_credit_card": forms.CheckboxInput(
+                attrs={"class": "form-check-input", "role": "switch"}
             ),
         }
 
@@ -105,6 +109,18 @@ class ExpenseForm(forms.ModelForm):
 
             # Populate payment source options dynamically
             self.fields["payment_source"].choices = self._get_payment_source_choices(user)
+
+            # On edit, set initial payment_source to "source_<id>" or "card_<id>" for JS dropdown + badge
+            if self.instance and getattr(self.instance, "pk", None):
+                pm = getattr(self.instance, "payment_method", None)
+                ps = getattr(self.instance, "payment_source", None)
+                cc = getattr(self.instance, "credit_card_id", None)
+                if cc is None and getattr(self.instance, "credit_card", None):
+                    cc = self.instance.credit_card_id
+                if pm == "Credit Card" and (cc or ps):
+                    self.initial["payment_source"] = f"card_{cc or ps}"
+                elif ps:
+                    self.initial["payment_source"] = f"source_{ps}"
 
             # Only set default participant if this is a new expense (not editing)
             # Check if participants_json already has initial data from the view
@@ -587,3 +603,105 @@ class ContactForm(forms.Form):
             from django_recaptcha.widgets import ReCaptchaV3
 
             self.fields["captcha"] = ReCaptchaField(widget=ReCaptchaV3)
+
+
+# --------------------
+# Cash Credit forms
+# --------------------
+
+
+class CashCreditForm(forms.ModelForm):
+    class Meta:
+        model = CashCredit
+        fields = [
+            "friend",
+            "credit_type",
+            "total_amount",
+            "received_into_account",
+            "given_from_account",
+            "date",
+            "notes",
+        ]
+        widgets = {
+            "friend": forms.Select(attrs={"class": "form-select"}),
+            "credit_type": forms.Select(attrs={"class": "form-select"}),
+            "total_amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0.01"}),
+            "received_into_account": forms.Select(attrs={"class": "form-select"}),
+            "given_from_account": forms.Select(attrs={"class": "form-select"}),
+            "date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+        }
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if user is not None:
+            qs = Friend.objects.filter(user=user)
+            # Exclude the logged-in user if they appear in their own friend list (same email)
+            # use id instead of email
+            if getattr(user, "id", None):
+                qs = qs.exclude(id=user.id)
+            self.fields["friend"].queryset = qs.order_by("name")
+            qs = PaymentSource.objects.filter(user=user, is_active=True).order_by("account_type", "name")
+            self.fields["received_into_account"].queryset = qs
+            self.fields["received_into_account"].required = False
+            self.fields["given_from_account"].queryset = qs
+            self.fields["given_from_account"].required = False
+
+    def clean(self):
+        data = super().clean()
+        credit_type = data.get("credit_type")
+        if credit_type == "borrowed":
+            if not data.get("received_into_account"):
+                self.add_error(
+                    "received_into_account",
+                    "Please select the account where the money was received (mandatory for borrowed).",
+                )
+        elif credit_type == "lent":
+            if not data.get("given_from_account"):
+                self.add_error(
+                    "given_from_account",
+                    "Please select the account the loan was given from (mandatory for lent).",
+                )
+        return data
+
+
+class CashCreditRepaymentForm(forms.ModelForm):
+    class Meta:
+        model = CashCreditRepayment
+        fields = ["amount", "date", "received_into_account", "paid_from_account", "notes"]
+        widgets = {
+            "amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01", "min": "0.01"}),
+            "date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "received_into_account": forms.Select(attrs={"class": "form-select"}),
+            "paid_from_account": forms.Select(attrs={"class": "form-select"}),
+            "notes": forms.TextInput(attrs={"class": "form-control", "placeholder": "Optional"}),
+        }
+
+    def __init__(self, *args, user=None, credit=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if user is not None:
+            qs = PaymentSource.objects.filter(user=user, is_active=True).order_by("account_type", "name")
+            self.fields["received_into_account"].queryset = qs
+            self.fields["received_into_account"].required = False
+            self.fields["paid_from_account"].queryset = qs
+            self.fields["paid_from_account"].required = False
+        self._credit = credit
+
+    def clean(self):
+        data = super().clean()
+        credit = getattr(self, "_credit", None)
+        if not credit:
+            return data
+        if credit.credit_type == "lent":
+            if not data.get("received_into_account"):
+                self.add_error(
+                    "received_into_account",
+                    "Please select the account where the repayment was received (mandatory for lent).",
+                )
+        elif credit.credit_type == "borrowed":
+            if not data.get("paid_from_account"):
+                self.add_error(
+                    "paid_from_account",
+                    "Please select the account the repayment was paid from (mandatory for borrowed).",
+                )
+        return data

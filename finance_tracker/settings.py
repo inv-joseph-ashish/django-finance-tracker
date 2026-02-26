@@ -58,6 +58,9 @@ CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if os.ge
 # SSL Configuration
 SSL_REQUIRED = os.getenv('SSL_REQUIRED', 'False') == 'True'
 
+# Gemini API Key
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+
 # Application definition
 
 INSTALLED_APPS = [

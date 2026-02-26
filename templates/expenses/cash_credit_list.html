@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="fade-in">
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-stretch align-items-sm-center mb-4">
+        <div class="mb-3 mb-sm-0">
+            <h2 class="h3 fw-bold mb-0">Cash Credit</h2>
+            <p class="text-muted small mb-0 mt-1">Track cash lent to friends or borrowed from friends. Record repayments and see remaining balance.</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{% url 'cash-credit-add' %}" class="btn btn-primary d-flex align-items-center shadow-sm">
+                <i class="bi bi-plus-lg me-2"></i> Add Cash Credit
+            </a>
+        </div>
+    </div>
+
+    {% if cash_credits %}
+        <div class="card shadow-sm border-0">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="border-0">Date</th>
+                                <th class="border-0">Friend</th>
+                                <th class="border-0">Type</th>
+                                <th class="border-0 text-end">Total</th>
+                                <th class="border-0 text-end">Paid</th>
+                                <th class="border-0 text-end">Remaining</th>
+                                <th class="border-0">Status</th>
+                                <th class="border-0 text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for c in cash_credits %}
+                            <tr>
+                                <td>{{ c.date|date:"M d, Y" }}</td>
+                                <td class="fw-bold">{{ c.friend.name }}</td>
+                                <td>
+                                    {% if c.credit_type == 'lent' %}
+                                        <span class="badge bg-info-subtle text-info">Lent</span>
+                                    {% else %}
+                                        <span class="badge bg-warning-subtle text-warning">Borrowed</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">{{ currency_symbol }}{{ c.total_amount|floatformat:2 }}</td>
+                                <td class="text-end">{{ currency_symbol }}{{ c.amount_repaid|floatformat:2 }}</td>
+                                <td class="text-end fw-bold">{{ currency_symbol }}{{ c.remaining|floatformat:2 }}</td>
+                                <td>
+                                    {% if c.status == 'completed' %}
+                                        <span class="badge bg-success">Completed</span>
+                                    {% elif c.status == 'partial' %}
+                                        <span class="badge bg-primary">Partial</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Pending</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <a href="{% url 'cash-credit-detail' c.pk %}" class="btn btn-sm btn-outline-primary me-1" title="View">View</a>
+                                    <a href="{% url 'cash-credit-edit' c.pk %}" class="btn btn-sm btn-outline-secondary me-1" title="Edit">Edit</a>
+                                    <a href="{% url 'cash-credit-delete' c.pk %}" class="btn btn-sm btn-outline-danger" title="Delete">Delete</a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% if page_obj %}
+        <nav class="mt-3" aria-label="Cash credit pagination">
+            <ul class="pagination justify-content-center mb-0">
+                {% if page_obj.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}">Previous</a></li>
+                {% endif %}
+                <li class="page-item disabled"><span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span></li>
+                {% if page_obj.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}">Next</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    {% else %}
+        <div class="card shadow-sm border-0">
+            <div class="card-body text-center py-5">
+                <i class="bi bi-cash-coin display-4 text-muted"></i>
+                <h5 class="mt-3">No cash credit records yet</h5>
+                <p class="text-muted">Record when you lend money to a friend or receive money from a friend into your bank.</p>
+                <a href="{% url 'cash-credit-add' %}" class="btn btn-primary mt-2"><i class="bi bi-plus-lg me-2"></i>Add Cash Credit</a>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

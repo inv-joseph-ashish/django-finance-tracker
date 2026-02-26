@@ -35,19 +35,34 @@ from django.views.generic import (
     CreateView,
     UpdateView,
     DeleteView,
+    DetailView,
     View,
 )
 
 from finance_tracker.ai_utils import predict_category_ai
-from .forms import ExpenseForm, IncomeForm, RecurringTransactionForm, ProfileUpdateForm, CustomSignupForm, ContactForm
+from .forms import (
+    ExpenseForm,
+    IncomeForm,
+    RecurringTransactionForm,
+    ProfileUpdateForm,
+    CustomSignupForm,
+    ContactForm,
+    CashCreditForm,
+    CashCreditRepaymentForm,
+)
+from .services import scan_bill_image
 from .models import (
+    CreditCard,
     Expense,
     Category,
     Income,
+    PaymentSource,
     RecurringTransaction,
     UserProfile,
     SubscriptionPlan,
     Friend,
+    CashCredit,
+    CashCreditRepayment,
 )
 from .models import Notification
 
@@ -63,7 +78,7 @@ def create_category_ajax(request):
             
             # Check Limits
             current_count = Category.objects.filter(user=request.user).count()
-            limit = 5 # Free
+            limit = 20 # Free
             if request.user.profile.is_plus:
                 limit = 10
             if request.user.profile.is_pro:
@@ -170,6 +185,40 @@ def get_payment_sources_ajax(request):
             }, status=500)
     
     return JsonResponse({'success': False, 'error': 'Invalid request method.'}, status=405)
+
+
+@login_required
+def scan_bill_ajax(request):
+    """
+    Scan uploaded bill image via Gemini and return extracted fields for form autofill.
+    """
+    if request.method != "POST":
+        return JsonResponse({"success": False, "error": "Invalid request method."}, status=405)
+
+    bill_file = request.FILES.get("bill_image")
+    if not bill_file:
+        return JsonResponse({"success": False, "error": "No bill image uploaded."}, status=400)
+
+    if bill_file.size > 5 * 1024 * 1024:
+        return JsonResponse({"success": False, "error": "Image too large. Max size is 5MB."}, status=400)
+
+    allowed_mime_types = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+    mime_type = (bill_file.content_type or "").lower()
+    if mime_type not in allowed_mime_types:
+        return JsonResponse(
+            {
+                "success": False,
+                "error": "Unsupported file type. Please upload JPG, PNG, or WEBP image.",
+            },
+            status=400,
+        )
+
+    # get name and id of the categories
+    categories = Category.objects.filter(user=request.user).order_by('name').values('name', 'id')
+
+    result = scan_bill_image(image_bytes=bill_file.read(), mime_type=mime_type, categories=categories)
+    status_code = 200 if result.get("success") else 400
+    return JsonResponse(result, status=status_code)
 
 
 def resend_verification_email(request):
@@ -337,6 +386,8 @@ def home_view(request):
     """
     Dashboard view with filters and multiple charts.
     """
+    from decimal import Decimal
+
     # Base QuerySet
     expenses = Expense.objects.filter(user=request.user).order_by('-date')
     
@@ -532,17 +583,104 @@ def home_view(request):
     ie_expense_data = [exp_map.get(p, 0.0) for p in all_periods_sorted]
     ie_savings_data = [inc_map.get(p, 0.0) - exp_map.get(p, 0.0) for p in all_periods_sorted]
 
-    # --- NEW: Payment Method Distribution ---
-    raw_payment_data = expenses.values('payment_method').annotate(total=Sum('amount')).order_by('payment_method')
-    payment_map = {}
-    for item in raw_payment_data:
-        pm_name = item['payment_method'] or 'Unknown'
-        payment_map[pm_name] = float(item['total'])
-    
-    # Sort by total desc
-    sorted_payment_items = sorted(payment_map.items(), key=lambda x: x[1], reverse=True)
+    # --- 1. Payment Method Distribution (method -> sources; use only payment_source) ---
+    # Cash when payment_method is Cash (payment_source can be null). Others use payment_source to resolve card or bank.
+    expenses_qs = expenses.values('id', 'payment_method', 'amount', 'payment_source')
+    payment_map = {}  # method -> { source_name: total }
+    for expense in expenses_qs:
+        pm_name = expense['payment_method'] or 'Unknown'
+        amount = float(expense['amount'])
+        source_id = expense.get('payment_source')
+
+        if pm_name == 'Cash':
+            # Cash: no payment_source needed; if method is Cash it's cash
+            if pm_name not in payment_map:
+                payment_map[pm_name] = {}
+            payment_map[pm_name]['Cash'] = payment_map[pm_name].get('Cash', 0) + amount
+        elif pm_name == 'Credit Card':
+            if source_id:
+                card = CreditCard.objects.filter(user=request.user, pk=source_id).first()
+                if card:
+                    if pm_name not in payment_map:
+                        payment_map[pm_name] = {}
+                    payment_map[pm_name][card.name] = payment_map[pm_name].get(card.name, 0) + amount
+                else:
+                    if pm_name not in payment_map:
+                        payment_map[pm_name] = {}
+                    payment_map[pm_name]['Unknown'] = payment_map[pm_name].get('Unknown', 0) + amount
+            else:
+                if pm_name not in payment_map:
+                    payment_map[pm_name] = {}
+                payment_map[pm_name]['Unknown'] = payment_map[pm_name].get('Unknown', 0) + amount
+        else:
+            # UPI, Debit Card, NetBanking: payment_source = PaymentSource id
+            if pm_name not in payment_map:
+                payment_map[pm_name] = {}
+            if source_id:
+                source = PaymentSource.objects.filter(user=request.user, pk=source_id).first()
+                if source:
+                    payment_map[pm_name][source.name] = payment_map[pm_name].get(source.name, 0) + amount
+                else:
+                    payment_map[pm_name]['Unknown'] = payment_map[pm_name].get('Unknown', 0) + amount
+            else:
+                payment_map[pm_name]['Unknown'] = payment_map[pm_name].get('Unknown', 0) + amount
+
+    # Stacked bar: one row per payment method, segments = sources (cards/banks)
+    method_totals = [(m, sum(sub.values())) for m, sub in payment_map.items()]
+    method_totals.sort(key=lambda x: x[1], reverse=True)
+    payment_method_labels = [m for m, _ in method_totals]
+    method_index = {m: i for i, m in enumerate(payment_method_labels)}
+    n_methods = len(payment_method_labels)
+    payment_stacked_datasets = []
+    for method, segments in payment_map.items():
+        idx = method_index[method]
+        for segment_name, amount in segments.items():
+            data = [0.0] * n_methods
+            data[idx] = amount
+            payment_stacked_datasets.append({"label": segment_name, "data": data})
+    payment_flat = []
+    for method, segments in payment_map.items():
+        for seg_name, amt in segments.items():
+            payment_flat.append((f"{method} - {seg_name}", amt))
+    sorted_payment_items = sorted(payment_flat, key=lambda x: x[1], reverse=True)
     payment_labels = [item[0] for item in sorted_payment_items]
     payment_data = [item[1] for item in sorted_payment_items]
+
+    # --- 2. Cashback by Payment Source (which card/bank has more cashback) ---
+    cashback_qs = expenses.filter(has_cashback=True).values(
+        'payment_method', 'payment_source', 'amount', 'cashback_type', 'cashback_value'
+    )
+    cashback_by_source = {}  # source_name -> total_cashback
+    for row in cashback_qs:
+        if not row.get('cashback_value'):
+            continue
+        amt = Decimal(str(row['amount']))
+        cb_type = row.get('cashback_type')
+        cb_val = Decimal(str(row['cashback_value']))
+        if cb_type == 'PERCENTAGE':
+            cashback_amt = float((amt * cb_val) / 100)
+        elif cb_type == 'FIXED':
+            cashback_amt = float(cb_val)
+        else:
+            continue
+        pm_name = row.get('payment_method') or 'Unknown'
+        source_id = row.get('payment_source')
+        if pm_name == 'Credit Card' and source_id:
+            card = CreditCard.objects.filter(user=request.user, pk=source_id).first()
+            name = card.name if card else 'Unknown'
+        elif source_id:
+            source = PaymentSource.objects.filter(user=request.user, pk=source_id).first()
+            name = source.name if source else 'Unknown'
+        else:
+            name = 'Cash/Other'
+        cashback_by_source[name] = cashback_by_source.get(name, 0) + cashback_amt
+    cashback_source_labels = list(cashback_by_source.keys())
+    cashback_source_data = [cashback_by_source[k] for k in cashback_source_labels]
+    # Sort by cashback amount desc
+    if cashback_source_labels:
+        combined = sorted(zip(cashback_source_labels, cashback_source_data), key=lambda x: x[1], reverse=True)
+        cashback_source_labels = [x[0] for x in combined]
+        cashback_source_data = [x[1] for x in combined]
 
 
     # 4. Summary Stats
@@ -922,6 +1060,10 @@ def home_view(request):
         'ie_savings_data': ie_savings_data,
         'payment_labels': payment_labels,
         'payment_data': payment_data,
+        'payment_method_labels': payment_method_labels,
+        'payment_stacked_datasets': payment_stacked_datasets,
+        'cashback_source_labels': cashback_source_labels,
+        'cashback_source_data': cashback_source_data,
         'years': years,
         'all_categories': all_categories,
         'selected_years': selected_years,
@@ -2187,6 +2329,15 @@ class BudgetDashboardView(LoginRequiredMixin, RecurringTransactionMixin, Templat
         return context
 
 # --------------------
+# Cash Credit Views
+# Cash received as credit from someone to bank account or given to someone as credit (on repayment enter the amount repaid and )
+# --------------------
+
+
+
+
+
+# --------------------
 # Recurring Transaction Views
 # --------------------
 
@@ -2472,6 +2623,227 @@ class RecurringTransactionDeleteView(LoginRequiredMixin, DeleteView):
         messages.success(self.request, f"You just saved {currency}{yearly_saving:,.0f}/year 🎉")
         return super().form_valid(form)
 
+
+# --------------------
+# Cash Credit Views
+# --------------------
+
+
+class CashCreditListView(LoginRequiredMixin, ListView):
+    model = CashCredit
+    template_name = "expenses/cash_credit_list.html"
+    context_object_name = "cash_credits"
+    paginate_by = 20
+
+    def get_queryset(self):
+        return CashCredit.objects.filter(user=self.request.user).select_related(
+            "friend", "received_into_account", "given_from_account"
+        ).order_by("-date", "-created_at")
+
+
+class CashCreditCreateView(LoginRequiredMixin, CreateView):
+    model = CashCredit
+    form_class = CashCreditForm
+    template_name = "expenses/cash_credit_form.html"
+    success_url = reverse_lazy("cash-credit-list")
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = self.request.user
+        return kwargs
+
+    def form_valid(self, form):
+        form.instance.user = self.request.user
+        acc_given = form.cleaned_data.get("given_from_account")
+        credit_type = form.cleaned_data.get("credit_type")
+        total_amount = form.cleaned_data.get("total_amount")
+        if credit_type == "lent" and acc_given and acc_given.balance < total_amount:
+            messages.error(
+                self.request,
+                f"Not enough balance in {acc_given.name}. Current: {acc_given.balance}.",
+            )
+            return self.render_to_response(self.get_context_data(form=form))
+        obj = form.save()
+        self.object = obj  # required for get_success_url() which uses self.object
+        acc_received = obj.received_into_account
+        if obj.credit_type == "borrowed" and acc_received:
+            acc_received.add(obj.total_amount)
+        elif obj.credit_type == "lent" and acc_given:
+            acc_given.deduct(obj.total_amount)
+        messages.success(self.request, "Cash credit recorded successfully.")
+        return redirect(self.get_success_url())
+
+
+class CashCreditDetailView(LoginRequiredMixin, DetailView):
+    model = CashCredit
+    template_name = "expenses/cash_credit_detail.html"
+    context_object_name = "credit"
+
+    def get_queryset(self):
+        return CashCredit.objects.filter(user=self.request.user).prefetch_related("repayments")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        credit = context.get("credit")
+        context["repayment_form"] = CashCreditRepaymentForm(
+            user=self.request.user, credit=credit
+        )
+        return context
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        form = CashCreditRepaymentForm(
+            request.POST, user=request.user, credit=self.object
+        )
+        if form.is_valid():
+            amount = form.cleaned_data["amount"]
+            remaining_before = self.object.remaining
+            if amount > remaining_before:
+                messages.error(
+                    request,
+                    f"Repayment amount cannot exceed remaining amount ({remaining_before}).",
+                )
+                return redirect("cash-credit-detail", pk=self.object.pk)
+            repayment = form.save(commit=False)
+            repayment.cash_credit = self.object
+            repayment.save()
+            # LENT: friend paid me back -> add to received_into_account (mandatory)
+            if self.object.credit_type == "lent" and repayment.received_into_account:
+                repayment.received_into_account.add(repayment.amount)
+            # BORROWED: I paid friend back -> deduct from paid_from_account (mandatory)
+            elif self.object.credit_type == "borrowed" and repayment.paid_from_account:
+                repayment.paid_from_account.deduct(repayment.amount)
+            messages.success(request, f"Repayment of {amount} recorded.")
+            return redirect("cash-credit-detail", pk=self.object.pk)
+        context = self.get_context_data()
+        context["repayment_form"] = form
+        return self.render_to_response(context)
+
+
+class CashCreditUpdateView(LoginRequiredMixin, UpdateView):
+    model = CashCredit
+    form_class = CashCreditForm
+    template_name = "expenses/cash_credit_form.html"
+    success_url = reverse_lazy("cash-credit-list")
+    context_object_name = "credit"
+
+    def get_queryset(self):
+        return CashCredit.objects.filter(user=self.request.user)
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = self.request.user
+        return kwargs
+
+    def form_valid(self, form):
+        obj = self.get_object()
+        old_total = obj.total_amount
+        old_received = obj.received_into_account
+        old_given = obj.given_from_account
+        new_total = form.cleaned_data["total_amount"]
+        new_received = form.cleaned_data.get("received_into_account")
+        new_given = form.cleaned_data.get("given_from_account")
+        amount_repaid = obj.amount_repaid
+        if new_total < amount_repaid:
+            form.add_error(
+                "total_amount",
+                f"Total cannot be less than amount already repaid ({amount_repaid}).",
+            )
+            return self.form_invalid(form)
+        # If account(s) changed, reverse full old and apply full new
+        if obj.credit_type == "borrowed":
+            if old_received != new_received:
+                if old_received:
+                    old_received.deduct(old_total)
+                if new_received:
+                    new_received.add(new_total)
+            elif old_received and old_total != new_total:
+                diff = new_total - old_total
+                if diff > 0:
+                    old_received.add(diff)
+                else:
+                    old_received.deduct(-diff)
+        elif obj.credit_type == "lent":
+            if old_given != new_given:
+                if old_given:
+                    old_given.add(old_total)
+                if new_given:
+                    if new_given.balance < new_total:
+                        form.add_error(
+                            "given_from_account",
+                            f"Not enough balance in {new_given.name}.",
+                        )
+                        return self.form_invalid(form)
+                    new_given.deduct(new_total)
+            elif old_given and old_total != new_total:
+                diff = new_total - old_total
+                if diff > 0:
+                    if old_given.balance < diff:
+                        form.add_error(
+                            "total_amount",
+                            f"Not enough balance in {old_given.name} to increase by {diff}.",
+                        )
+                        return self.form_invalid(form)
+                    old_given.deduct(diff)
+                else:
+                    old_given.add(-diff)
+        messages.success(self.request, "Cash credit updated.")
+        return super().form_valid(form)
+
+
+class CashCreditDeleteView(LoginRequiredMixin, DeleteView):
+    model = CashCredit
+    template_name = "expenses/cash_credit_confirm_delete.html"
+    success_url = reverse_lazy("cash-credit-list")
+    context_object_name = "credit"
+
+    def get_queryset(self):
+        return CashCredit.objects.filter(user=self.request.user)
+
+    def delete(self, request, *args, **kwargs):
+        obj = self.get_object()
+        # Reverse balance: BORROWED had added to account -> deduct; LENT had deducted -> add back
+        acc_received = obj.received_into_account
+        acc_given = obj.given_from_account
+        repaid = obj.amount_repaid
+        if obj.credit_type == "borrowed" and acc_received:
+            acc_received.deduct(obj.total_amount)
+        elif obj.credit_type == "lent" and acc_given:
+            acc_given.add(obj.total_amount)
+        # Repayments: reverse balance updates
+        for r in obj.repayments.all():
+            if r.received_into_account:
+                r.received_into_account.deduct(r.amount)
+            if r.paid_from_account:
+                r.paid_from_account.add(r.amount)
+        return super().delete(request, *args, **kwargs)
+
+
+class CashCreditBulkDeleteView(LoginRequiredMixin, View):
+    def post(self, request):
+        ids = request.POST.getlist("ids")
+        if not ids:
+            messages.warning(request, "No items selected.")
+            return redirect("cash-credit-list")
+        qs = CashCredit.objects.filter(user=request.user, pk__in=ids)
+        for obj in qs:
+            acc_received = obj.received_into_account
+            acc_given = obj.given_from_account
+            if obj.credit_type == "borrowed" and acc_received:
+                acc_received.deduct(obj.total_amount)
+            elif obj.credit_type == "lent" and acc_given:
+                acc_given.add(obj.total_amount)
+            for r in obj.repayments.all():
+                if r.received_into_account:
+                    r.received_into_account.deduct(r.amount)
+                if r.paid_from_account:
+                    r.paid_from_account.add(r.amount)
+        count = qs.count()
+        qs.delete()
+        messages.success(request, f"{count} cash credit(s) deleted.")
+        return redirect("cash-credit-list")
+
+
 class AccountDeleteView(LoginRequiredMixin, DeleteView):
     model = User
     success_url = reverse_lazy('landing')
@@ -2655,32 +3027,34 @@ class BalanceSummaryView(LoginRequiredMixin, TemplateView):
         user_owes_people = []
         settled_people = []
 
+        # user id
         for friend_id, balance_data in balances.items():
-            net_balance = balance_data["net"]
-            friend = balance_data.get("friend")
+            if friend_id != user.id:
+                net_balance = balance_data["net"]
+                friend = balance_data.get("friend")
 
-            balance_info = {
-                "id": friend_id,
-                "friend": friend,
-                "name": balance_data["name"],
-                "email": friend.email if friend else None,
-                "phone": friend.phone if friend else None,
-                "lent": balance_data["lent"],
-                "borrowed": balance_data["borrowed"],
-                "net": net_balance,
-                "net_abs": abs(net_balance),
-                "transactions": transactions_by_friend.get(friend_id, []),
-            }
+                balance_info = {
+                    "id": friend_id,
+                    "friend": friend,
+                    "name": balance_data["name"],
+                    "email": friend.email if friend else None,
+                    "phone": friend.phone if friend else None,
+                    "lent": balance_data["lent"],
+                    "borrowed": balance_data["borrowed"],
+                    "net": net_balance,
+                    "net_abs": abs(net_balance),
+                    "transactions": transactions_by_friend.get(friend_id, []),
+                }
 
-            if net_balance > 0:
-                # User lent more than borrowed - friend owes user
-                people_owe_user.append(balance_info)
-            elif net_balance < 0:
-                # User borrowed more than lent - user owes friend
-                user_owes_people.append(balance_info)
-            else:
-                # Net balance is zero - settled up
-                settled_people.append(balance_info)
+                if net_balance > 0:
+                    # User lent more than borrowed - friend owes user
+                    people_owe_user.append(balance_info)
+                elif net_balance < 0:
+                    # User borrowed more than lent - user owes friend
+                    user_owes_people.append(balance_info)
+                else:
+                    # Net balance is zero - settled up
+                    settled_people.append(balance_info)
 
         # Sort by absolute net balance (highest first)
         people_owe_user.sort(key=lambda x: x["net"], reverse=True)

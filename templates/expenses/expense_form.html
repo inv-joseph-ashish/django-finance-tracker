@@ -143,6 +143,18 @@
                             </div>
                         </div>
 
+                        <!-- Scan Bill Button -->
+                        <div class="mb-3">
+                            <button type="button" class="btn btn-outline-primary" id="scan-bill-btn">
+                                <i class="bi bi-camera me-1"></i> Scan Bill
+                            </button>
+                            <input type="file" class="form-control d-none" id="bill-file-input" accept="image/jpeg,image/png,image/webp">
+                            <small class="form-text text-muted d-block mt-1">
+                                Upload a bill image (JPG, PNG, WEBP) to auto-fill date, amount, and description.
+                            </small>
+                            <div id="scan-bill-status" class="alert d-none mt-2 mb-0" role="alert"></div>
+                        </div>
+
                         <!-- Regular Expense Fields -->
                         {% for field in form %}
                         {% if field.name != 'cashback_type' and field.name != 'cashback_value' and field.name != 'has_cashback' and field.name != 'expense_type' and field.name != 'participants_json' and field.name != 'payer_id' and field.name != 'participants' and field.name != 'payment_source' and field.name != 'credit_card' %}
@@ -184,7 +196,7 @@
                         {% endfor %}
 
                         <!-- Account Selection Section -->
-                        <div id="payment-account-section" class="card bg-light border-0 mb-3">
+                        <div id="payment-account-section" class="card bg-light border-0 mb-3" data-initial-payment-source="{{ form.payment_source.value|default:'' }}">
                             <div class="card-body">
                                 <h6 class="card-subtitle mb-3 text-primary">
                                     <i class="bi bi-wallet2 me-2"></i>Payment Account <span id="payment-account-required-badge" class="badge bg-danger">Required</span>
@@ -277,6 +289,16 @@
                                 {{ form.has_cashback }}
                                 <label class="form-check-label" for="{{ form.has_cashback.id_for_label }}">
                                     <i class="bi bi-cash-coin me-1"></i>Apply Cashback
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Paid to Credit Card Section (only applicable for credit card expenses)-->
+                        <div class="mb-3" id="paid-to-credit-card-section" {% if form.payment_method.value != 'Credit Card' %}style="display: none;"{% endif %}>
+                            <div class="form-check form-switch">
+                                {{ form.paid_to_credit_card }}
+                                <label class="form-check-label" for="{{ form.paid_to_credit_card.id_for_label }}">
+                                    <i class="bi bi-credit-card me-1"></i>Paid to Credit Card
                                 </label>
                             </div>
                         </div>
@@ -943,6 +965,19 @@
                 });
             }
         }
+    
+        // --- Paid to Credit Card Section Logic ---
+        const paidToCreditCardSection = document.getElementById('paid-to-credit-card-section');
+        const paymentMethodSelect = document.querySelector('select[name="payment_method"]');
+        if (paymentMethodSelect) {
+            paymentMethodSelect.addEventListener('change', function() {
+                if (this.value === 'Credit Card') {
+                    paidToCreditCardSection.style.display = 'block';
+                } else {
+                    paidToCreditCardSection.style.display = 'none';
+                }
+            });
+        }
     });
 </script>
 <script>
@@ -1123,6 +1158,109 @@
         });
         
         
+        // --- Bill Scan Autofill Logic (single-form mode) ---
+        const scanBillBtn = document.getElementById('scan-bill-btn');
+        const billFileInput = document.getElementById('bill-file-input');
+        const scanBillStatus = document.getElementById('scan-bill-status');
+
+        function showScanStatus(kind, message) {
+            if (!scanBillStatus) return;
+            scanBillStatus.classList.remove('d-none', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger');
+            scanBillStatus.classList.add(`alert-${kind}`);
+            scanBillStatus.textContent = message;
+        }
+
+        function fillExpenseFormFromScan(data) {
+            const amountField = document.getElementById('id_amount');
+            const dateField = document.getElementById('id_date');
+            const descriptionField = document.getElementById('id_description');
+            const paymentMethodField = document.getElementById('id_payment_method');
+            const categoryField = document.getElementById('id_category');
+
+            if (data.amount && amountField) {
+                amountField.value = data.amount;
+                amountField.dispatchEvent(new Event('input', { bubbles: true }));
+                amountField.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            if (data.date && dateField) {
+                dateField.value = data.date;
+            }
+            if (data.description && descriptionField) {
+                descriptionField.value = data.description;
+                descriptionField.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            // Wait until amount-driven reset logic settles, then set payment method.
+            if (data.payment_method && paymentMethodField) {
+                window.setTimeout(() => {
+                    paymentMethodField.value = data.payment_method;
+                    paymentMethodField.dispatchEvent(new Event('change', { bubbles: true }));
+                }, 700);
+            }
+
+            if (data.category_suggestion && categoryField) {
+                const target = data.category_suggestion.toLowerCase();
+                for (let i = 0; i < categoryField.options.length; i++) {
+                    const opt = categoryField.options[i];
+                    if (opt.value.toLowerCase() === target || opt.text.toLowerCase() === target) {
+                        categoryField.selectedIndex = i;
+                        categoryField.dispatchEvent(new Event('change', { bubbles: true }));
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (scanBillBtn && billFileInput) {
+            scanBillBtn.addEventListener('click', function () {
+                billFileInput.click();
+            });
+
+            billFileInput.addEventListener('change', async function () {
+                const file = billFileInput.files && billFileInput.files[0];
+                if (!file) return;
+
+                showScanStatus('info', 'Scanning bill image...');
+                scanBillBtn.disabled = true;
+
+                try {
+                    const payload = new FormData();
+                    payload.append('bill_image', file);
+
+                    const response = await fetch("{% url 'scan-bill-ajax' %}", {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': '{{ csrf_token }}',
+                        },
+                        body: payload,
+                    });
+                    const result = await response.json();
+
+                    console.log("result", result);
+                    
+
+                    if (!result.success) {
+                        showScanStatus('danger', result.error || 'Bill scan failed.');
+                        return;
+                    }
+
+                    console.log("result.data", result.data);
+                    fillExpenseFormFromScan(result.data || {});
+
+                    if (result.warnings && result.warnings.length) {
+                        showScanStatus('warning', `Scanned with warnings: ${result.warnings.join(' ')}`);
+                    } else {
+                        showScanStatus('success', 'Bill scanned successfully. Fields were auto-filled.');
+                    }
+                } catch (err) {
+                    showScanStatus('danger', 'Could not scan bill right now. Please try again.');
+                } finally {
+                    scanBillBtn.disabled = false;
+                    billFileInput.value = '';
+                }
+            });
+        }
+
         // Prevent form submission on Enter key in input AND select fields
         container.addEventListener('keydown', function(e) {
             // Check if key is Enter
@@ -1260,6 +1398,26 @@
                     // Enable the select and make it required
                     paymentSourceSelect.disabled = false;
                     paymentSourceSelect.required = true;
+                    
+                    // On edit: restore initial payment source selection and show balance badge
+                    const initialPaymentSource = paymentAccountSection && paymentAccountSection.getAttribute('data-initial-payment-source');
+                    if (initialPaymentSource) {
+                        paymentSourceSelect.value = initialPaymentSource;
+                        if (paymentSourceSelect.value === initialPaymentSource) {
+                            const selectedOption = paymentSourceSelect.options[paymentSourceSelect.selectedIndex];
+                            if (selectedOption && selectedOption.dataset.balanceDisplay) {
+                                paymentSourceBalanceBadge.textContent = 'Balance: ' + selectedOption.dataset.balanceDisplay;
+                                paymentSourceBalanceBadge.classList.remove('d-none');
+                                if (selectedOption.dataset.sufficientFunds === 'false') {
+                                    paymentSourceBalanceBadge.classList.remove('bg-info');
+                                    paymentSourceBalanceBadge.classList.add('bg-danger');
+                                } else {
+                                    paymentSourceBalanceBadge.classList.remove('bg-danger');
+                                    paymentSourceBalanceBadge.classList.add('bg-info');
+                                }
+                            }
+                        }
+                    }
                     
                     // Update balance badge when selection changes
                     paymentSourceSelect.addEventListener('change', function() {

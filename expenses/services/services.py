@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from django.db.models import Q
 
-from .models import SharedExpense, Friend
+from expenses.models import SharedExpense, Friend
 
 
 class BalanceCalculationService:

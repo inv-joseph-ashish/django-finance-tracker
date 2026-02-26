@@ -77,6 +77,12 @@
                             Expenses
                         </a>
                     </li>
+                    <!-- Cash credit list link -->
+                    <li class="nav-item">
+                        <a href="{% url 'cash-credit-list' %}" class="nav-link {% if 'cash-credit' in request.resolver_match.url_name %}active{% endif %}" onclick="showLoader()">
+                            Credits
+                        </a>
+                    </li>
                     <li class="nav-item">
                         <a href="{% url 'recurring-list' %}" class="nav-link {% if 'recurring' in request.resolver_match.url_name %}active{% endif %}" onclick="showLoader()">
                             Subscriptions
@@ -97,7 +103,11 @@
                             Balances
                         </a>
                     </li>
-                    <!-- Settings Link (Removed, moving to dropdown) -->
+                    <li class="nav-item">
+                        <a href="{% url 'settings-home' %}" class="nav-link {% if 'settings' in request.resolver_match.url_name %}active{% endif %}" onclick="showLoader()">
+                            Settings
+                        </a>
+                    </li>
 
                     <!-- Vertical Divider (Desktop) -->
                     <li class="nav-item d-none d-lg-flex align-items-center mx-2">

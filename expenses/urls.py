@@ -15,6 +15,7 @@ urlpatterns = [
     path("export/", views.export_expenses, name="export-expenses"),
     path("expenses/", views.ExpenseListView.as_view(), name="expense-list"),
     path("expenses/add/", views.ExpenseCreateView.as_view(), name="expense-create"),
+
     path(
         "expenses/<int:pk>/edit/",
         views.ExpenseUpdateView.as_view(),
@@ -30,11 +31,23 @@ urlpatterns = [
         views.ExpenseDeleteView.as_view(),
         name="expense-delete",
     ),
+
+    # Cash credit (lent/borrowed with friends)
+    path("cash-credit/", views.CashCreditListView.as_view(), name="cash-credit-list"),
+    path("cash-credit/add/", views.CashCreditCreateView.as_view(), name="cash-credit-add"),
+    path("cash-credit/<int:pk>/", views.CashCreditDetailView.as_view(), name="cash-credit-detail"),
+    path("cash-credit/<int:pk>/edit/", views.CashCreditUpdateView.as_view(), name="cash-credit-edit"),
+    path("cash-credit/bulk-delete/", views.CashCreditBulkDeleteView.as_view(), name="cash-credit-bulk-delete"),
+    path("cash-credit/<int:pk>/delete/", views.CashCreditDeleteView.as_view(), name="cash-credit-delete"),
+
     path(
         "category/create/ajax/", views.create_category_ajax, name="category-create-ajax"
     ),
     path(
         "payment-sources/ajax/", views.get_payment_sources_ajax, name="payment-sources-ajax"
+    ),
+    path(
+        "scan-bill/ajax/", views.scan_bill_ajax, name="scan-bill-ajax"
     ),
     path("category/list/", views.CategoryListView.as_view(), name="category-list"),
     path("category/add/", views.CategoryCreateView.as_view(), name="category-create"),
